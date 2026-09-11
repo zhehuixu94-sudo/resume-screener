@@ -180,8 +180,12 @@ class Repository:
         return state
 
     def reset_stuck(self, cfg: JobConfig, *, states: Sequence[str] = ("parsing", "evaluating"),
-                    include_failed: bool = False) -> int:
-        """把卡住/失败的行恢复成可重跑（清 attempts 与锁）——运维入口，供 kill 后或人工重试用。"""
+                    include_failed: bool = False, lock_timeout_min: int = LOCK_TIMEOUT_MIN) -> int:
+        """把卡住/失败的行恢复成可重跑（清 attempts 与锁）——运维入口，供 kill 后或人工重试用。
+
+        只回收**锁已过期**的中间态行：正在被 worker 处理的行（锁新鲜）绝不碰，
+        否则会把别人手上的活抢下来重算（实测踩过：一次 retry 让 10 行被重复评估）。
+        """
         target = list(states) + (["parse_failed", "eval_failed"] if include_failed else [])
         row = db.execute(
             """WITH upd AS (
@@ -189,9 +193,10 @@ class Repository:
                       SET state = 'pending_parse', attempts = 0, last_error = '', worker = '', locked_at = NULL,
                           updated_at = now()
                     WHERE company_id = %s AND job_id = %s AND config_version = %s AND state = ANY(%s)
+                      AND (locked_at IS NULL OR locked_at < now() - make_interval(mins => %s))
                 RETURNING 1)
                SELECT count(*) AS n FROM upd""",
-            (self.company_id, cfg.job_id, cfg.config_version, target), returning=True)
+            (self.company_id, cfg.job_id, cfg.config_version, target, lock_timeout_min), returning=True)
         n = int((row or {}).get("n", 0))
         self.audit("reset_stuck", "job", f"{cfg.job_id}@{cfg.config_version}", {"states": target, "n": n})
         return n

@@ -49,7 +49,7 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 | 任务 | 状态 | 说明 |
 |---|---|---|
 | 任务 1 数据契约三件套 | ✅ 完成并验收 | 8 个 JSON Schema（Pydantic 导出）、四级证据锚定、校验四态（ok/repaired/degraded/failed）、三段带双通道判定 |
-| 任务 2 M0 最小闭环 | ✅ 验收达标（CLI + HTML 报告路线） | 落库（PG + pgvector）、状态机、幂等与断点续跑、10 份批量、证据可点开的报告都已实测；FastAPI 骨架与最小 UI 未做 |
+| 任务 2 M0 最小闭环 | ✅ 完成（CLI + Web UI + exe） | 落库（PG + pgvector）、状态机、幂等与断点续跑；FastAPI 接口 + Vue3 前端 + 打包成单文件 exe |
 | 任务 3 锚点标定达标线 | ✅ 已实现并实跑 | `tools/calibrate.py`：合格组≥3、不合格组≥2、两组必须分得开；达标线 = 合格组下限 |
 | 任务 4 规则分稳定性 | ✅ 已实现并实测 | `scoring.labeling_repeats`（多次标注取中位数 + 维度多数投票）+ `dimension_aggregation` |
 | 任务 5 时间线 / 字段级校验 | 🚧 时间线已完成 | `app/text/timeline.py`：起止矛盾 / 同类型经历重叠 / 经历空档 / 未来日期；字段级异常仍是占位 |
@@ -105,6 +105,34 @@ cp local/resumes.json.example local/resumes.json   # 填自己的简历路径（
 模型：默认 `Qwen/Qwen3.5-122B-A10B`（关思考模式），降本档 `Qwen/Qwen3.5-35B-A3B`，`--model` 可覆盖。
 平台为硅基流动（OpenAI 兼容 HTTP，无第三方 SDK 依赖）。
 
+## 四点五、Web 界面与 exe（给 HR 用的形态）
+
+```bash
+# 开发态：起服务（自动打开浏览器）
+.venv/Scripts/python launcher.py --port 8765
+
+# 打包成单文件 exe（约 45 MB，双击即用，不需要装 Python）
+build_exe.bat            # 或：
+.venv/Scripts/python -m PyInstaller --onefile --name ResumeScreener \
+  --add-data "web;web" --add-data "config;config" --add-data "schemas;schemas" \
+  --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
+  --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets.auto \
+  --hidden-import uvicorn.lifespan.on --collect-submodules psycopg --collect-submodules pymupdf launcher.py
+```
+
+**exe 的行为**：在 `127.0.0.1` 挑一个空闲端口起服务（**不监听局域网**，简历不会外泄）→ 自动打开浏览器 →
+第一次运行会把岗位配置释放到 exe 旁边的 `config/`（用户可直接改 JSON 加岗位，不用重新打包）→
+控制台显示数据库连接状态与访问地址，关掉窗口即停止。
+
+**界面三块**：① 上传与运行（拖拽上传 pdf/docx/txt → 入队 → 设并发开始评估 → 状态机进度条）；
+② 队列看板（自动达标 / 转人工 / 自动淘汰 三列，卡片显示分数、置信度、匹配度、证据覆盖率、冲突类型，
+点开是详情抽屉：硬门槛结论 + 维度分 + 内嵌的报告 iframe，证据依旧可点开跳原文）；
+③ 岗位配置（维度权重、硬门槛、豁免规则、标定状态一眼可见）。
+
+**部署前提**：需要一个能连上的 PostgreSQL（本项目开发用容器 `resume_pg`），以及一个硅基流动 API key
+（环境变量 `SILICONFLOW_API_KEY`）。两者缺一 exe 照样启动，界面上会明确显示"数据库不可用/未配置密钥"和排查提示，
+而不是黑框闪退。
+
 ## 五、批处理（M0 闭环）
 
 ```bash
@@ -146,6 +174,8 @@ DSN 走环境变量 `PG_DSN` / `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABA
 
 ```
 app/
+  api.py       FastAPI 接口（上传/运行/看板/报告/健康检查）
+  paths.py     路径解析（源码运行与 exe 两种形态）
   contracts/   三件套 + 五段模型输出契约（Pydantic）+ 清洗层（枚举归一/垃圾值剔除/未知字段留痕）
   text/        抽取 · 规范化与偏移映射 · 四级锚定 · 质量门禁
   llm/         硅基流动客户端（含探活）· 五段 prompt · 校验-重试-降级引擎 · 清洗器
@@ -153,6 +183,9 @@ app/
   store/       Postgres schema + repository（状态机 / 幂等 / 审计日志）
   batch.py     批处理 CLI（入队 / 跑 / 续跑 / 出报告）
   report.py    单人报告（证据可点开）+ 批次矩阵
+web/           Vue3 前端（全局构建，无打包步骤，Chrome 109 兼容；vue 已本地内置，离线可用）
+launcher.py    exe 启动器（挑端口 → 起服务 → 开浏览器）
+build_exe.bat  一键打包 exe
 schemas/       由 Pydantic 导出的 JSON Schema（含 5 段模型输出契约）
 config/        6 个岗位配置（硬门槛 / 维度锚点 / 加分项关键词 / 达标线与标定）
 tools/         导出 schema · 迁移配置 · 契约验收

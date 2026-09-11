@@ -233,7 +233,8 @@ def main() -> int:
             print("  -", w)
 
     if a.cmd == "retry":
-        n = repo.reset_stuck(job, include_failed=True)
+        # 只回收锁已过期的行：正在跑的行不动（用 --lock-timeout 控制"多久算过期"）
+        n = repo.reset_stuck(job, include_failed=True, lock_timeout_min=a.lock_timeout)
         print(f"已重置 {n} 行为可重跑 → 状态机分布：{repo.progress(job)}")
 
     if a.cmd == "status":

@@ -25,3 +25,8 @@ secrets/
 *.swp
 Thumbs.db
 desktop.ini
+
+# exe 构建产物与打包中间文件
+build/
+dist/
+*.spec

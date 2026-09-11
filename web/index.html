@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>简历初筛系统</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <header>
+    <div class="brand">
+      <span class="logo">筛</span>
+      <div>
+        <h1>简历初筛系统</h1>
+        <p class="sub">LLM 判定 + 规则层复核 · 每个结论都能点开原文证据 · 仅供参考，不参与录用决策</p>
+      </div>
+    </div>
+    <div class="health">
+      <span :class="['dot', health.ok ? 'ok' : 'bad']"></span>
+      <span v-if="health.ok">数据库 {{ health.db.version }} · {{ health.db.counts.evaluation }} 条评估 · 模型 {{ shortModel }}</span>
+      <span v-else>数据库不可用：{{ health.db.error || '正在检测…' }}</span>
+      <button class="ghost" @click="loadAll">刷新</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button v-for="t in tabs" :key="t.id" :class="{active: tab === t.id}" @click="tab = t.id">{{ t.name }}</button>
+    <div class="spacer"></div>
+    <label class="job-pick">
+      岗位
+      <select v-model="jobId" @change="onJobChange">
+        <option v-for="j in jobs" :value="j.job_id">{{ j.job_title }}（v{{ j.config_version }}）</option>
+      </select>
+    </label>
+  </nav>
+
+  <!-- 上传 & 运行 -->
+  <section v-show="tab === 'run'" class="grid2">
+    <div class="card">
+      <h2>1. 上传简历</h2>
+      <div class="drop" :class="{over: dragging}" @dragover.prevent="dragging = true" @dragleave="dragging = false"
+           @drop.prevent="onDrop">
+        <p>把简历拖进来，或</p>
+        <label class="btn">
+          选择文件
+          <input type="file" multiple accept=".pdf,.docx,.txt" @change="onPick" hidden>
+        </label>
+        <p class="hint">支持 PDF / DOCX / TXT（扫描件需先转文字，本版不接 OCR）</p>
+      </div>
+      <ul class="files" v-if="pending.length">
+        <li v-for="f in pending" :key="f.name">{{ f.name }} <span class="meta">{{ (f.size/1024).toFixed(0) }} KB</span></li>
+      </ul>
+      <button class="primary" :disabled="!pending.length || busy" @click="upload">
+        入队 {{ pending.length || '' }} 份
+      </button>
+      <p class="meta" v-if="msg">{{ msg }}</p>
+    </div>
+
+    <div class="card">
+      <h2>2. 开始评估</h2>
+      <div class="row">
+        <label>并发
+          <select v-model.number="workers"><option v-for="n in [1,2,3,5,8]" :value="n">{{ n }}</option></select>
+        </label>
+        <label>上限
+          <select v-model.number="limit"><option :value="null">不限</option><option v-for="n in [10,25,50,100]" :value="n">{{ n }}</option></select>
+        </label>
+        <button class="primary" :disabled="running" @click="startRun">{{ running ? '正在跑…' : '开始评估' }}</button>
+        <button class="ghost" @click="retry">重试卡住/失败的行</button>
+      </div>
+      <div class="progress" v-if="progress">
+        <div class="bar">
+          <div v-for="(n, k) in progress" :key="k" :class="['seg', stateClass(k)]"
+               :style="{width: pct(n) + '%'}" :title="k + ' ' + n"></div>
+        </div>
+        <ul class="legend">
+          <li v-for="(n, k) in progress" :key="k"><span :class="['dot', stateClass(k)]"></span>{{ stateName(k) }} {{ n }}</li>
+        </ul>
+      </div>
+      <p class="meta" v-if="runInfo">
+        运行状态：{{ runInfo.status || '空闲' }}
+        <span v-if="runInfo.api_calls">· API 调用 {{ runInfo.api_calls }} 次</span>
+        <span v-if="runInfo.error">· 错误 {{ runInfo.error }}</span>
+      </p>
+    </div>
+  </section>
+
+  <!-- 队列看板 -->
+  <section v-show="tab === 'board'" class="board-wrap">
+    <div class="filters">
+      <input v-model="q" placeholder="按文件名筛选…">
+      <span v-if="progress">未完成 {{ progress.pending_parse || 0 }} 份</span>
+      <a class="ghost" :href="'/api/jobs/' + jobId + '/matrix'" target="_blank">打开批次矩阵</a>
+    </div>
+    <div class="board">
+      <div class="col" v-for="c in columns" :key="c.key">
+        <h3>{{ c.name }} <span class="meta">{{ filtered(c.key).length }}</span>
+          <span class="meta">{{ c.hint }}</span>
+        </h3>
+        <div class="scroll">
+          <div class="item" v-for="r in filtered(c.key)" :key="r.application_id" @click="openDetail(r)">
+            <div class="item-top">
+              <span class="score">{{ r.base_total == null ? '—' : r.base_total.toFixed(1) }}</span>
+              <span class="name">{{ r.file_name }}</span>
+            </div>
+            <div class="meta">
+              置信度 {{ r.confidence }} · 匹配度 {{ r.fit || '—' }}{{ r.fit_ratio != null ? ' ' + r.fit_ratio : '' }}
+              · 证据覆盖 {{ r.evidence_coverage != null ? Math.round(r.evidence_coverage * 100) + '%' : '—' }}
+            </div>
+            <div class="tags">
+              <span v-for="c2 in r.conflicts" class="tag warn">{{ conflictName(c2) }}</span>
+              <span v-if="r.timeline === 'issues'" class="tag">时间线有问题</span>
+              <span v-if="r.field_anomalies" class="tag">字段异常 {{ r.field_anomalies }}</span>
+            </div>
+          </div>
+          <p class="meta" v-if="!filtered(c.key).length">（空）</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 岗位配置 -->
+  <section v-show="tab === 'config'" class="card">
+    <h2>{{ job.job_title }} · 配置 v{{ job.config_version }}</h2>
+    <p class="meta">
+      达标线 {{ job.pass_line }}（{{ job.pass_line_source === 'anchor_calibrated' ? '锚点标定' : '人工兜底' }}）
+      ± {{ job.band_width }} · 维度聚合 {{ job.aggregation }} · 标注重复 {{ job.labeling_repeats }} 次 · 标定状态 {{ job.calibration }}
+    </p>
+    <h3>评分维度</h3>
+    <table><thead><tr><th>维度</th><th>id</th><th>权重</th></tr></thead>
+      <tbody><tr v-for="d in job.dimensions"><td>{{ d.name }}</td><td class="meta">{{ d.id }}</td><td>{{ d.weight }}</td></tr></tbody></table>
+    <h3>硬门槛</h3>
+    <table><thead><tr><th>门槛</th><th>id</th><th>规则</th></tr></thead>
+      <tbody><tr v-for="f in job.hard_filters"><td>{{ f.name }}</td><td class="meta">{{ f.id }}</td><td>{{ f.rule }}</td></tr></tbody></table>
+    <h3>硬门槛豁免（综合达标）</h3>
+    <table v-if="(job.overrides || []).length"><thead><tr><th>规则</th><th>触发条件</th></tr></thead>
+      <tbody><tr v-for="o in job.overrides"><td class="meta">{{ o.id }}</td><td>{{ o.when_dimension }} ≥ {{ o.min_points }} 分 → 触发门槛也不自动淘汰，转人工</td></tr></tbody></table>
+    <p v-else class="meta">该岗位没有配豁免规则</p>
+  </section>
+
+  <!-- 详情抽屉 -->
+  <div class="drawer" v-if="detail" @click.self="detail = null">
+    <div class="drawer-body">
+      <div class="drawer-head">
+        <div>
+          <h2>{{ detail.file_name }}</h2>
+          <p class="meta">
+            {{ detail.verdict }} · {{ decisionName(detail.decision) }} · 规则分 {{ detail.base_total }}
+            · 置信度 {{ detail.confidence }} · 标注 {{ (detail.labeling || {}).method }} {{ (detail.labeling || {}).repeats }} 次
+            <span v-if="(detail.labeling || {}).dimension_agreement_mean">（维度一致率 {{ detail.labeling.dimension_agreement_mean }}）</span>
+          </p>
+        </div>
+        <div>
+          <a class="ghost" :href="'/api/applications/' + detail.application_id + '/report'" target="_blank">单独打开报告</a>
+          <button class="ghost" @click="detail = null">关闭</button>
+        </div>
+      </div>
+      <p class="reason">{{ detail.decision_reason }}</p>
+      <h3>硬门槛（规则层预检）</h3>
+      <table><thead><tr><th>门槛</th><th>结论</th></tr></thead><tbody>
+        <tr v-for="(v, k) in detail.hard_filters" :key="k"><td>{{ k }}</td><td :class="v === 'fail' ? 'bad' : (v === 'unknown' ? 'warn' : 'ok')">{{ hfName(v) }}</td></tr>
+      </tbody></table>
+      <h3>维度得分</h3>
+      <table><thead><tr><th>维度</th><th>得分</th></tr></thead><tbody>
+        <tr v-for="(v, k) in detail.dim_points" :key="k"><td>{{ k }}</td><td>{{ v }}</td></tr>
+      </tbody></table>
+      <h3>冲突与转人工理由</h3>
+      <p class="meta">{{ (detail.conflicts || []).map(conflictName).join(' / ') || '无' }}</p>
+      <iframe :src="'/api/applications/' + detail.application_id + '/report'" class="report-frame"></iframe>
+    </div>
+  </div>
+</div>
+<script src="/vendor/vue.global.prod.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

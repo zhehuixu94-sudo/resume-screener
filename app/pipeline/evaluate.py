@@ -210,9 +210,20 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     if q_res is not None:
         stage_status["questions"] = q_res.status
 
+    # 硬门槛：规则层按配置关键词预检（模型只负责解释与给证据，不允许它随手把门槛标成触发）
+    hard = check_hard_filters(job, parse, compare_obj)
+
     # ---------------------------------------------------------- 证据引用
+    # 注意：硬门槛命中的证据也要进 cited_evidence —— 它可能不被任何能力项引用，
+    # 但契约要求"引用了就必须能查到"（100 份跑批时就是这里漏了，导致整份评估校验失败）。
     cited: list[CitedEvidence] = []
     seen: set[str] = set()
+    for sid in [sid for h in hard for sid in h.evidence_span_ids]:
+        sp = next((e for e in parse.evidence if e.span_id == sid), None)
+        if sp and sid not in seen:
+            seen.add(sid)
+            cited.append(CitedEvidence(span_id=sp.span_id, text=sp.text, span=sp.span, page=sp.page,
+                                       anchored=sp.anchored, anchor_method=sp.anchoring.method))
     for it in labeled + rules.unmapped:
         sid = it.get("span_id") if isinstance(it, dict) else getattr(it, "span_id", None)
         if not sid or sid in seen:
@@ -225,8 +236,6 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                    anchored=sp.anchored, anchor_method=sp.anchoring.method))
     anchored_map = {c.span_id: c.anchored for c in cited}
 
-    # 硬门槛：规则层按配置关键词预检（模型只负责解释与给证据，不允许它随手把门槛标成触发）
-    hard = check_hard_filters(job, parse, compare_obj)
     outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})

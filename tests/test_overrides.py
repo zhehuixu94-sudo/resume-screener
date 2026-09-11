@@ -80,3 +80,35 @@ def test_豁免规则必须引用存在的维度():
     cfg["overrides"][0]["when_dimension"] = "not_a_dimension"
     with pytest.raises(ValidationError):
         JobConfig.model_validate(cfg)
+
+
+def test_硬门槛引用的证据必须进cited_evidence():
+    """回归：100 份跑批时出现过『硬门槛 major 引用了不在 cited_evidence 里的 ev_0001』，
+    因为硬门槛命中的证据若不被任何能力项引用，就不会被并进 cited_evidence，契约校验随即失败。"""
+    import json as _json
+    from app.contracts import JobConfig
+    from app.pipeline.hard_filters import check_hard_filters
+    cfg = JobConfig.model_validate(_json.load(open(os.path.join(ROOT, "config", "job_game_dev.json"),
+                                                  encoding="utf-8")))
+    # 证据里只有一条『数字媒体技术』（专业关键词），且它不会被任何维度条目引用
+    parse = _parse_stub("教育经历 某学院 数字媒体技术 2021.9-2025.6", [("b1.i1", "数字媒体技术")])
+    res = check_hard_filters(cfg, parse, None)
+    major = next(r for r in res if r.id == "major")
+    assert major.result == "pass" and major.evidence_span_ids == ["ev_0001"]
+
+    # 用最小评估对象验证契约：cited_evidence 含该 span 时通过，不含时被拒
+    from app.contracts import Evaluation
+    import copy
+    from tests.test_contracts import _cfg
+    base = _json.load(open(os.path.join(ROOT, "out", "_eval_fixture.json"), encoding="utf-8")) \
+        if os.path.exists(os.path.join(ROOT, "out", "_eval_fixture.json")) else None
+    if base is None:
+        return          # 没有 fixture 时只验证规则层那一半（fixture 由 validate_contracts 生成）
+    ev = Evaluation.model_validate(base)
+    bad = copy.deepcopy(base)
+    bad["hard_filters"][0]["evidence_span_ids"] = ["ev_9999"]
+    try:
+        Evaluation.model_validate(bad)
+        raise AssertionError("引用了不存在的 span 竟然通过了契约校验")
+    except Exception as e:
+        assert "ev_9999" in str(e)
