@@ -63,9 +63,32 @@ class Dimension(Strict):
 
 
 class BonusItem(Strict):
+    """加分项。两种判据，二选一（都给时以 must_match 为准）：
+
+    - keywords：命中任意一个即算（**弱判据**，只适合信号本身就很强的词，如 "Steam"）；
+    - must_match：OR-of-AND 分组 —— 每一组内命中任意一个，且**所有组都要满足**才算命中。
+      例：游戏公司实习 = [["游戏公司","游戏工作室","互娱"], ["实习"]]
+      → 既要有游戏方向的雇主、又要有实习经历，单出现"游戏"或"实习"都不算。
+
+    为什么加 must_match：实测 100 份语料下，纯"任意关键词"口径让 4 个加分项对 100/100 全部命中
+    （"游戏公司实习"只要简历里出现"游戏"二字就算），加分彻底失去区分度。
+    """
+
     name: str = Field(min_length=1)
     points: float = Field(ge=0)
-    keywords: list[str] = Field(min_length=1, description="必须显式声明，靠名称模糊匹配会漏（实测）")
+    keywords: list[str] = Field(default_factory=list, description="弱判据：任意命中即算（尽量少用）")
+    must_match: list[list[str]] = Field(default_factory=list,
+                                        description="强判据：OR-of-AND 分组，所有组都需满足")
+    note: str = ""          # 口径依据留档（为什么选这些词、实测命中率），改配置时不用回去翻聊天记录
+
+    @model_validator(mode="after")
+    def _need_a_rule(self) -> "BonusItem":
+        if not self.keywords and not self.must_match:
+            raise ValueError(f"加分项「{self.name}」必须给出 keywords 或 must_match")
+        for g in self.must_match:
+            if not g:
+                raise ValueError(f"加分项「{self.name}」的 must_match 里有空组")
+        return self
 
 
 class CalibrationAnchor(Strict):
@@ -182,15 +205,24 @@ class JobConfig(Strict):
     def dimension(self, dim_id: str) -> Dimension | None:
         return next((d for d in self.dimensions if d.id == dim_id), None)
 
-    def anchor_prompt(self) -> dict[str, str]:
-        """给 compare 阶段的三档标尺：每个维度取第一条非空锚点拼一句。"""
+    def anchor_prompt(self, per_dim_chars: int = 120, max_dims: int = 10) -> dict[str, str]:
+        """给 compare 阶段的三档标尺：**每个维度**的锚点都要喂进去（按权重从高到低）。
+
+        原来每个档位只取"第一个维度的锚点"就 break —— 等于拿一把只量 Unity 的尺子去量整个人，
+        另外 5 个维度的锚点从没进过提示词。实测 100 份语料：模型判达标 32 / 边缘 58 / 不达标 10，
+        但对照档位明显偏保守（32 份判达标的人分数都没到线是另一回事）。
+        每维截断到 per_dim_chars，避免提示词被锚点撑爆（量级：10 维 × 3 档 × 120 字）。
+        """
+        dims = sorted(self.dimensions, key=lambda d: -d.weight)[:max_dims]
         out: dict[str, str] = {}
         for lvl in ("合格", "边缘", "不达标"):
-            for d in self.dimensions:
-                txt = getattr(d.anchors, lvl)
+            lines = []
+            for d in dims:
+                txt = (getattr(d.anchors, lvl) or "").strip()
                 if txt:
-                    out[lvl] = f"[{d.name}] {txt}"
-                    break
+                    lines.append(f"- [{d.name}｜权重 {d.weight:g}] {txt[:per_dim_chars]}")
+            if lines:
+                out[lvl] = "\n".join(lines)
         return out
 
     def anchor_by_dimension(self) -> dict[str, dict[AnchorLevel, str]]:

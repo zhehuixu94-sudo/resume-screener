@@ -6,6 +6,7 @@
   "$defs": {
     "BonusItem": {
       "additionalProperties": false,
+      "description": "加分项。两种判据，二选一（都给时以 must_match 为准）：\n\n- keywords：命中任意一个即算（**弱判据**，只适合信号本身就很强的词，如 \"Steam\"）；\n- must_match：OR-of-AND 分组 —— 每一组内命中任意一个，且**所有组都要满足**才算命中。\n  例：游戏公司实习 = [[\"游戏公司\",\"游戏工作室\",\"互娱\"], [\"实习\"]]\n  → 既要有游戏方向的雇主、又要有实习经历，单出现\"游戏\"或\"实习\"都不算。\n\n为什么加 must_match：实测 100 份语料下，纯\"任意关键词\"口径让 4 个加分项对 100/100 全部命中\n（\"游戏公司实习\"只要简历里出现\"游戏\"二字就算），加分彻底失去区分度。",
       "properties": {
         "name": {
           "minLength": 1,
@@ -18,19 +19,33 @@
           "type": "number"
         },
         "keywords": {
-          "description": "必须显式声明，靠名称模糊匹配会漏（实测）",
+          "description": "弱判据：任意命中即算（尽量少用）",
           "items": {
             "type": "string"
           },
-          "minItems": 1,
           "title": "Keywords",
           "type": "array"
+        },
+        "must_match": {
+          "description": "强判据：OR-of-AND 分组，所有组都需满足",
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Must Match",
+          "type": "array"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
         }
       },
       "required": [
         "name",
-        "points",
-        "keywords"
+        "points"
       ],
       "title": "BonusItem",
       "type": "object"

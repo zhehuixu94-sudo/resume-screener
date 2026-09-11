@@ -56,7 +56,7 @@ def replay(cfg: JobConfig, rows: list[dict]) -> list[dict]:
                             "confidence": None, "span_id": u.span_id})
 
         rules = rule_layer(cfg, labeled)
-        bonus = bonus_layer(cfg, parse.text, labeled, old.llm_compare)
+        bonus = bonus_layer(cfg, parse, labeled)
         hard = check_hard_filters(cfg, parse, old.llm_compare)
         stage_status = old.stage_status
         anchored = {c.span_id: c.anchored for c in old.cited_evidence}

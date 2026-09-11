@@ -89,6 +89,8 @@ class BonusHit(Strict):
     points: float = Field(ge=0)
     matched_keywords: list[str] = Field(default_factory=list)
     applied: bool = True
+    evidence_span_ids: list[str] = Field(default_factory=list,
+                                         description="命中的原文证据 span（加分也要能点开原文）")
 
 
 # ---------------------------------------------------------------- 证据引用

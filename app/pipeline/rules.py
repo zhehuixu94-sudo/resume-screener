@@ -23,6 +23,7 @@ from ..contracts.evaluation import (
 )
 from ..contracts.job_config import JobConfig
 from ..contracts.llm_outputs import LlmCompareOutput, LlmFitOutput
+from ..contracts.resume_parse import ResumeParse  # noqa: TC001
 
 RELEVANCE_W = {"强": 1.0, "中": 0.66, "弱": 0.33, "无关": 0.0}
 DIFFICULTY_W = {"高": 3, "中": 2, "低": 1}
@@ -82,17 +83,49 @@ def rule_layer(job: JobConfig, labeled: list[dict], *, aggregation: str | None =
     return RuleOutcome(dimensions=dims, unmapped=unmapped, base_total=round(total, 1))
 
 
-def bonus_layer(job: JobConfig, resume_text: str, labeled: list[dict], compare: LlmCompareOutput | None) -> list[BonusHit]:
-    """加分项：关键词在【简历全文】里匹配（关键词由 HR 在配置里显式声明，不猜）。"""
-    blob = " ".join([resume_text] + [f"{i.get('evidence','')} {i.get('capability','')}" for i in labeled])
-    if compare is not None:
-        blob += " " + " ".join([compare.reason, *compare.strengths, *compare.gaps])
-    low = blob.lower()
+def bonus_layer(job: JobConfig, parse: "ResumeParse", labeled: list[dict]) -> list[BonusHit]:
+    """加分项：**只在简历原文 + 已锚定的证据片段里**匹配关键词。
+
+    两条硬规矩（都是实测踩出来的）：
+    1. 匹配池绝不能放模型自己的话（原来把 compare.reason/strengths/gaps 也拼进来了，
+       等于模型夸候选人两句就能给他加分）；
+    2. 命中判据按配置：must_match（OR-of-AND，所有组都要满足）优先，否则退化为"任意关键词"。
+       纯"任意关键词"会让加分项人人有份（实测 100/100 全命中，加分彻底不区分人）。
+    """
+    # 池子：简历原文 + 已锚定条目的证据原文（未锚定的是模型转述，不算）
+    pool = [parse.text]
+    for it in labeled:
+        sid = it.get("span_id") if isinstance(it, dict) else None
+        if not sid:
+            continue
+        sp = next((e for e in parse.evidence if e.span_id == sid), None)
+        if sp is not None and sp.anchored:
+            pool.append(sp.text)
+    low = " ".join(pool).lower()
+
     hits: list[BonusHit] = []
-    for b in job.bonus:                     # type: ignore[union-attr]
-        matched = [k for k in b.keywords if k.lower() in low]
-        if matched:
-            hits.append(BonusHit(name=b.name, points=b.points, matched_keywords=matched[:5], applied=True))
+    for b in job.bonus or []:                                   # type: ignore[union-attr]
+        matched: list[str] = []
+        ok = False
+        if b.must_match:
+            groups_ok, matched = True, []
+            for group in b.must_match:
+                g_hit = [k for k in group if k.lower() in low]
+                if not g_hit:
+                    groups_ok = False
+                    break
+                matched.extend(g_hit[:2])
+            ok = groups_ok
+        elif b.keywords:
+            matched = [k for k in b.keywords if k.lower() in low]
+            ok = bool(matched)
+        if not ok:
+            continue
+        # 证据：原文里含任一命中关键词的 span（最多 3 条，够点开看即可）
+        ev_ids = [e.span_id for e in parse.evidence
+                  if any(k.lower() in e.text.lower() for k in matched)][:3]
+        hits.append(BonusHit(name=b.name, points=b.points, matched_keywords=matched[:5],
+                             applied=True, evidence_span_ids=ev_ids))
     return hits
 
 

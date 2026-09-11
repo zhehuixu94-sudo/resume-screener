@@ -27,6 +27,14 @@
           "default": true,
           "title": "Applied",
           "type": "boolean"
+        },
+        "evidence_span_ids": {
+          "description": "命中的原文证据 span（加分也要能点开原文）",
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
         }
       },
       "required": [

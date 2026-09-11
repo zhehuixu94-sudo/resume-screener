@@ -220,7 +220,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
 
     # ---------------------------------------------------------- 规则层
     rules = rule_layer(job, labeled)
-    bonus = bonus_layer(job, parse.text, labeled, compare_obj)
+    bonus = bonus_layer(job, parse, labeled)   # 匹配池只含简历原文+已锚定证据，模型的话不算（见 rules.bonus_layer）
 
     stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
