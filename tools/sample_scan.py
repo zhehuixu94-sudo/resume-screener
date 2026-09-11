@@ -33,8 +33,8 @@ def scan(path: str) -> dict:
 
 SAMPLES = [
     r"C:\Users\user\Desktop\毕设及简历\示例候选人简历3.0.docx",
-    r"C:\Users\user\Desktop\毕设及简历\个人简历-候选人B .pdf",
-    r"C:\Users\user\Desktop\毕设及简历\候选人C-自媒体.pdf",
+    r"C:\Users\user\Desktop\毕设及简历\resume_a.pdf",
+    r"C:\Users\user\Desktop\毕设及简历\resume_b.pdf",
     r"C:\Users\user\Desktop\毕设及简历\个人简历.docx",
 ] + [f"local/samples/resume_{i:03d}.txt" for i in range(1, 7)]
 

@@ -8,7 +8,7 @@
 
 用法：
   python tools/stability_check.py --job config/job_jushi_teacher.json \\
-      --resumes "示例候选人简历3.0.docx" resume_001.txt 个人简历-候选人B .pdf --repeat 3
+      --resumes "示例候选人简历3.0.docx" resume_001.txt resume_a.pdf --repeat 3
 """
 from __future__ import annotations
 

@@ -13,7 +13,7 @@
 用法：
   python tools/calibrate.py --job config/job_jushi_teacher.json \\
       --good 示例候选人简历3.0.docx resume_002.txt resume_001.txt \\
-      --bad  候选人C-自媒体.pdf 个人简历.docx 个人简历-候选人B .pdf \\
+      --bad  resume_b.pdf 个人简历.docx resume_a.pdf \\
       --margin 0 [--dry-run]
 """
 from __future__ import annotations
