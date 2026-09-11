@@ -85,6 +85,21 @@ class Calibration(Strict):
     notes: str = Field(default="", description="标定诊断：两组分数是否分得开、样本是否够数、缺哪些硬证据")
 
 
+class VetoOverride(Strict):
+    """硬门槛豁免：满足条件时，把"自动淘汰"降级成"转人工"。
+
+    存在的理由：硬门槛是筛人的，但"综合达标"才是真实标准 —— 一个四级没过、ACM 拿金牌的候选人
+    不该被一条证书直接刷掉。豁免只降级、不升级：绝不允许因为豁免而自动达标。
+    """
+
+    id: str = Field(min_length=1)
+    when_dimension: str = Field(min_length=1, description="看哪个维度")
+    min_points: float = Field(gt=0, description="该维度得分 ≥ 这个值才豁免")
+    applies_to: list[str] = Field(default_factory=list, description="豁免哪些门槛 id；空 = 所有硬门槛")
+    require_bonus: list[str] = Field(default_factory=list, description="还必须命中的加分项名称（如『省级以上竞赛获奖』）")
+    reason: str = Field(min_length=2)
+
+
 class Scoring(Strict):
     pass_line: float = Field(ge=0, le=200, description="达标线")
     pass_line_source: Literal["manual_default", "anchor_calibrated"] = "manual_default"
@@ -109,6 +124,8 @@ class JobConfig(Strict):
 
     scoring: Scoring
     calibration: Calibration = Field(default_factory=Calibration)
+    overrides: list[VetoOverride] = Field(default_factory=list,
+        description="硬门槛豁免规则：综合实力足够强时不自动淘汰，转人工")
     interview_focus: str = ""
     notes: str = ""
 
@@ -128,6 +145,12 @@ class JobConfig(Strict):
             raise ValueError("calibrated 状态必须有锚点样本")
         if self.calibration.status == "calibrated" and self.scoring.pass_line_source != "anchor_calibrated":
             raise ValueError("已标定但 pass_line_source 仍是 manual_default：标定后必须回填")
+        for o in self.overrides:
+            if o.when_dimension not in ids:
+                raise ValueError(f"豁免规则 {o.id} 引用了不存在的维度：{o.when_dimension}")
+            bad = [f for f in o.applies_to if f not in fids]
+            if bad:
+                raise ValueError(f"豁免规则 {o.id} 引用了不存在的硬门槛：{bad}")
         good = [a for a in self.calibration.anchors if a.label == "合格"]
         if self.calibration.status == "calibrated" and len(good) < 3:
             raise ValueError("锚点标定至少需要 3 份合格样本（HR 侧要求 3~5 份）")

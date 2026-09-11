@@ -163,7 +163,9 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
 
     # 硬门槛：规则层按配置关键词预检（模型只负责解释与给证据，不允许它随手把门槛标成触发）
     hard = check_hard_filters(job, parse, compare_obj)
-    outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard)
+    outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard,
+                     dim_points={d.id: d.points for d in rules.dimensions},
+                     bonus_names={b.name for b in bonus})
     outcome = sync_decisions_with_evidence(outcome, anchored_map,
                                            [d.best_span_id or "" for d in rules.dimensions])
 

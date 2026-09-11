@@ -107,6 +107,7 @@ ConflictType = Literal[
     "fit_vs_verdict",       # 匹配度与整体评估打架
     "low_confidence",       # 置信度低于阈值
     "veto_triggered",       # 触发硬门槛
+    "veto_override",        # 触发硬门槛但命中豁免（综合实力足够强）→ 转人工而非淘汰
     "degraded_validation",  # 某段模型输出降级/失败
     "unanchored_evidence",  # 存在锚定失败的证据
     "edge_band",            # 落在达标线 ±band 之内

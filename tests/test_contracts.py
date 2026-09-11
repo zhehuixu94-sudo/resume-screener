@@ -254,8 +254,8 @@ def test_硬门槛预检_本科与对口专业不被冤枉():
     res = check_hard_filters(cfg, parse, None)
     fails, unknown, passes = veto_summary(res)
     assert "edu" in passes and "major" in passes, [(r.id, r.result, r.reason) for r in res]
-    assert "cet4" in unknown, "没写四级应当是证据不足（转人工），不是不通过"
     assert not fails
+    assert "cet4" not in [f.id for f in cfg.hard_filters], "四级已降为综合评分项，不再一票否决"
     edu = next(r for r in res if r.id == "edu")
     assert edu.evidence_span_ids, "命中关键词时要带上证据 span，报告才点得开"
     # 抽取的证据没覆盖到关键词时：如实说明，不编 span
@@ -277,15 +277,16 @@ def test_硬门槛预检_大专与不对口专业判不通过():
     assert "edu" in fails and "major" in fails
 
 
-def test_硬门槛预检_命中六级也算满足四级():
+def test_英语能力作为维度覆盖六级与四级():
+    """四级从否决项改为『英语能力』维度后，六级/雅思等更高证明同样算合格证据。"""
     import json as _json
     from app.contracts import JobConfig
-    from app.pipeline.hard_filters import check_hard_filters, veto_summary
     cfg = JobConfig.model_validate(_json.load(open(os.path.join(ROOT, "config", "job_jushi_teacher.json"),
                                                   encoding="utf-8")))
-    parse = _parse_stub("本科 计算机科学与技术 英语：CET-6 通过", [("b1.i1", "CET-6")])
-    _fails, unknown, passes = veto_summary(check_hard_filters(cfg, parse, None))
-    assert "cet4" in passes and "cet4" not in unknown
+    eng = next(d for d in cfg.dimensions if d.id == "english")
+    for kw in ("四级", "CET-4", "六级", "CET-6", "雅思", "托福"):
+        assert kw in eng.keywords, f"英语维度关键词缺 {kw}"
+    assert eng.anchors.合格 and "四级" in eng.anchors.合格
 
 
 def _cmp(verdict: str, conf: float):

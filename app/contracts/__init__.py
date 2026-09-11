@@ -34,6 +34,7 @@ from .job_config import (
     HardFilter,
     JobConfig,
     Scoring,
+    VetoOverride,
 )
 from .llm_outputs import (
     FitItem,
@@ -110,6 +111,7 @@ __all__ = [
     "SourceInfo",
     "StageMeta",
     "UnmappedItem",
+    "VetoOverride",
     "Usage",
     "ValidationReport",
 ]

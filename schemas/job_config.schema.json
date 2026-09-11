@@ -322,6 +322,58 @@
       ],
       "title": "Scoring",
       "type": "object"
+    },
+    "VetoOverride": {
+      "additionalProperties": false,
+      "description": "硬门槛豁免：满足条件时，把\"自动淘汰\"降级成\"转人工\"。\n\n存在的理由：硬门槛是筛人的，但\"综合达标\"才是真实标准 —— 一个四级没过、ACM 拿金牌的候选人\n不该被一条证书直接刷掉。豁免只降级、不升级：绝不允许因为豁免而自动达标。",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "when_dimension": {
+          "description": "看哪个维度",
+          "minLength": 1,
+          "title": "When Dimension",
+          "type": "string"
+        },
+        "min_points": {
+          "description": "该维度得分 ≥ 这个值才豁免",
+          "exclusiveMinimum": 0,
+          "title": "Min Points",
+          "type": "number"
+        },
+        "applies_to": {
+          "description": "豁免哪些门槛 id；空 = 所有硬门槛",
+          "items": {
+            "type": "string"
+          },
+          "title": "Applies To",
+          "type": "array"
+        },
+        "require_bonus": {
+          "description": "还必须命中的加分项名称（如『省级以上竞赛获奖』）",
+          "items": {
+            "type": "string"
+          },
+          "title": "Require Bonus",
+          "type": "array"
+        },
+        "reason": {
+          "minLength": 2,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "when_dimension",
+        "min_points",
+        "reason"
+      ],
+      "title": "VetoOverride",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -388,6 +440,14 @@
     },
     "calibration": {
       "$ref": "#/$defs/Calibration"
+    },
+    "overrides": {
+      "description": "硬门槛豁免规则：综合实力足够强时不自动淘汰，转人工",
+      "items": {
+        "$ref": "#/$defs/VetoOverride"
+      },
+      "title": "Overrides",
+      "type": "array"
     },
     "interview_focus": {
       "default": "",

@@ -106,9 +106,26 @@ class DecisionOutcome:
     hard_filters: list[HardFilterResult] = field(default_factory=list)
 
 
+def _override_hit(job: JobConfig, fails: list[HardFilterResult], dims: dict[str, float],
+                  bonus_names: set[str]) -> tuple[str, str] | None:
+    """看豁免规则是否命中：维度分够高（且要求的加分项也命中）→ 返回（命中规则说明）。"""
+    for o in job.overrides:
+        scope = o.applies_to or [h.id for h in fails]
+        if not any(h.id in scope for h in fails):
+            continue
+        if dims.get(o.when_dimension, 0.0) < o.min_points:
+            continue
+        if o.require_bonus and not set(o.require_bonus) <= bonus_names:
+            continue
+        return o.id, o.reason
+    return None
+
+
 def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, fit: LlmFitOutput | None,
            stage_status: dict[str, str], anchored_span_ids: set[str],
-           hard_filters: list[HardFilterResult] | None = None) -> DecisionOutcome:
+           hard_filters: list[HardFilterResult] | None = None,
+           dim_points: dict[str, float] | None = None,
+           bonus_names: set[str] | None = None) -> DecisionOutcome:
     """三段带 + 双通道判定。
 
     hard_filters 由 `pipeline.hard_filters.check_hard_filters()` 规则层给出（三态）：
@@ -140,6 +157,16 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
     unknown = [h for h in hard if h.veto and h.result == "unknown"]
     if fails:
         detail = "；".join(f"{h.name}：{h.reason}" for h in fails)
+        # 综合达标的落点：单项不满足但整体实力足够强 → 不自动淘汰，交人判断
+        hit = _override_hit(job, fails, dim_points or {}, bonus_names or set())
+        if hit:
+            rule_id, why = hit
+            conflicts.append(Conflict(type="veto_override",
+                                      detail=f"触发门槛（{'、'.join(h.id for h in fails)}）但命中豁免规则 {rule_id}：{why}"))
+            return DecisionOutcome(verdict="边缘", decision="manual_review",
+                                   reason=f"触发硬性门槛（{'、'.join(h.id for h in fails)}）：{detail}"
+                                          f" —— 但{why} → 转人工综合判断，不自动淘汰",
+                                   conflicts=conflicts, hard_filters=hard)
         conflicts.append(Conflict(type="veto_triggered", detail=detail))
         return DecisionOutcome(verdict="不达标", decision="auto_reject",
                                reason=f"触发硬性门槛（{'、'.join(h.id for h in fails)}）：{detail}",

@@ -125,6 +125,7 @@
             "fit_vs_verdict",
             "low_confidence",
             "veto_triggered",
+            "veto_override",
             "degraded_validation",
             "unanchored_evidence",
             "edge_band"
