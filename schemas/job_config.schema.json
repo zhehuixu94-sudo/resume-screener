@@ -302,6 +302,14 @@
           "title": "Dimension Aggregation",
           "type": "string"
         },
+        "labeling_repeats": {
+          "default": 1,
+          "description": "标注阶段重复次数：>1 时取中位数（相关性×难度）+ 维度多数投票，用来压标注噪声。实测：单次跑同一份简历总分极差 10.0，3 次取中位数后 0.0（成本是标注多调 2 次）",
+          "maximum": 9,
+          "minimum": 1,
+          "title": "Labeling Repeats",
+          "type": "integer"
+        },
         "fallback_keyword_mapping": {
           "default": true,
           "description": "模型没给维度时是否用维度 keywords 兜底归类",

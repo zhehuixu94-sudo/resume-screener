@@ -133,6 +133,16 @@ class ScoringSnapshot(Strict):
     gate_score_field: Literal["base_total"] = "base_total"
 
 
+class LabelingMeta(Strict):
+    """这一次评估的标注是怎么得到的（稳定性可追溯）。"""
+
+    method: Literal["single", "median_majority"] = "single"
+    repeats: int = Field(default=1, ge=1)
+    dimension_agreement_mean: float | None = Field(default=None, ge=0, le=1,
+        description="同一份解析多次标注时，条目维度归属的平均一致率；<0.8 说明维度划分本身不稳")
+    per_item_agreement_min: float | None = Field(default=None, ge=0, le=1)
+
+
 class EvalQuality(Strict):
     gate_passed: bool
     issues: list[str] = Field(default_factory=list)
@@ -190,6 +200,7 @@ class Evaluation(Strict):
     prompt_version: str
     temperature: float = 0.0
     stages: EvalStages
+    labeling: LabelingMeta = Field(default_factory=LabelingMeta)
     scoring_snapshot: ScoringSnapshot
     quality: EvalQuality
     disclaimer: str = DISCLAIMER

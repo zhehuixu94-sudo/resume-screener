@@ -8,11 +8,14 @@
 from __future__ import annotations
 
 import json
+import statistics
+from collections import Counter
 
 from pydantic import ValidationError
 
 from ..contracts.evaluation import (
     CitedEvidence,
+    LabelingMeta,
     Conflict,
     EvalQuality,
     Evaluation,
@@ -52,7 +55,7 @@ from ..llm.prompts import (
 )
 from ..llm.structured import call_structured
 from .hard_filters import check_hard_filters
-from .rules import bonus_layer, decide, rule_layer, sync_decisions_with_evidence
+from .rules import RELEVANCE_W, DIFFICULTY_W, bonus_layer, decide, rule_layer, sync_decisions_with_evidence
 
 
 def _flat_items(parse: ResumeParse) -> list[dict]:
@@ -64,39 +67,100 @@ def _flat_items(parse: ResumeParse) -> list[dict]:
     return out
 
 
-def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
-             eval_id: str | None = None, temperature: float = 0.0) -> tuple[Evaluation, list[str]]:
-    notes: list[str] = []
+def _merge_label_runs(runs: list[list[dict]]) -> tuple[list[dict], dict]:
+    """把多次标注合成一次：维度取多数票，相关性/难度取与中位分数最接近的那一轮的标签。
+
+    为什么这么做：单次标注的总分极差实测能到 10~16 分（同一个条目在"弱/中"之间翻），
+    取中位数把这种单点翻转吸收掉；维度归属同理（一个条目从"竞赛"翻到"编程"会整段改分）。
+    """
+    by_item: dict[str, list[dict]] = {}
+    for labeled in runs:
+        for it in labeled:
+            by_item.setdefault(it["item_id"], []).append(it)
+
+    merged, agree = [], []
+    for item_id, group in by_item.items():
+        base = dict(group[0])
+        dims = [g.get("dimension") for g in group if g.get("dimension")]
+        if dims:
+            counts = Counter(dims)
+            top = counts.most_common()
+            tied = sorted(d for d, c in top if c == top[0][1])
+            base["dimension"] = tied[0]                   # 并列取字典序最小，保证确定性
+            agree.append(top[0][1] / len(dims))
+        else:
+            base["dimension"] = None
+        raws = sorted(RELEVANCE_W.get(g.get("relevance"), 0.0) * DIFFICULTY_W.get(g.get("difficulty"), 1)
+                      for g in group)
+        median = statistics.median(raws)
+        pick = min(group, key=lambda g: (abs(RELEVANCE_W.get(g.get("relevance"), 0.0)
+                                              * DIFFICULTY_W.get(g.get("difficulty"), 1) - median),
+                                         RELEVANCE_W.get(g.get("relevance"), 0.0)))
+        base["relevance"], base["difficulty"] = pick.get("relevance"), pick.get("difficulty")
+        base["confidence"] = round(statistics.mean(g.get("confidence") or 0.0 for g in group), 3)
+        merged.append(base)
+    stats = {"repeats": len(runs),
+             "dimension_agreement_mean": round(statistics.mean(agree), 3) if agree else None,
+             "per_item_agreement_min": round(min(agree), 3) if agree else None}
+    return merged, stats
+
+
+def label_items(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
+                temperature: float = 0.0, repeats: int | None = None) -> tuple[list[dict], object, dict]:
+    """标注段（可单独调用）：返回（对齐到解析条目的标注结果, StageMeta）。
+
+    抽出来是为了做稳定性实验 —— 同一份解析结果重复标注 N 次，才能把"标注噪声"和"解析噪声"分开。
+    """
     flat = _flat_items(parse)
     by_idx = {f["idx"]: f for f in flat}
-
-    # ---------------------------------------------------------- ② 标注
     dim_desc = "\n".join(f'  {d.id} = {d.name}' for d in job.dimensions)
     label_user = TPL_LABEL.format(job_title=job.job_title, dim_ids=", ".join(job.dimension_ids),
                                   dim_desc=dim_desc, items=json.dumps(flat, ensure_ascii=False, indent=1))
-    label_res = call_structured(client, stage="label", system=SYS_LABEL, user=label_user,
-                                model_cls=LlmLabelOutput, coercer=coerce_label_factory(flat, job), job=job,
-                                prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_LABEL, TPL_LABEL),
-                                config_version=job.config_version, model=model, max_tokens=6000,
-                                temperature=temperature, dynamic_check=make_label_check(flat, job))
+    n = repeats if repeats is not None else getattr(job.scoring, "labeling_repeats", 1)
+    runs: list[list[dict]] = []
+    res = None
+    for _ in range(max(1, n)):
+        res = call_structured(client, stage="label", system=SYS_LABEL, user=label_user,
+                              model_cls=LlmLabelOutput, coercer=coerce_label_factory(flat, job), job=job,
+                              prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_LABEL, TPL_LABEL),
+                              config_version=job.config_version, model=model, max_tokens=6000,
+                              temperature=temperature, dynamic_check=make_label_check(flat, job))
+        runs.append(_parse_label_payload(res, by_idx, parse, flat))
+    if len(runs) == 1:
+        merged, stats = runs[0], {"repeats": 1, "dimension_agreement_mean": None, "per_item_agreement_min": None}
+    else:
+        merged, stats = _merge_label_runs(runs)
+    return merged, res.meta, stats
 
+
+def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict]) -> list[dict]:
     labeled: list[dict] = []
-    if label_res.obj is not None:
-        for it in label_res.obj.items:                     # type: ignore[attr-defined]
+    if res.obj is not None:
+        for it in res.obj.items:
             src = by_idx[int(it.idx)]
+            sp = parse.span_of(src["item_id"])
             labeled.append({"item_id": src["item_id"], "idx": int(it.idx), "block": it.block,
                             "capability": it.capability, "evidence": it.evidence, "relevance": it.relevance,
                             "difficulty": it.difficulty, "dimension": it.dimension, "reason": it.reason,
-                            "confidence": it.confidence,
-                            "span_id": parse.span_of(src["item_id"]).span_id if parse.span_of(src["item_id"]) else None})
+                            "confidence": it.confidence, "span_id": sp.span_id if sp else None})
     else:
-        # 降级：标注段彻底失败 → 全部按中性值进规则层（分数会明显偏低，因此只能转人工）
-        for f in flat:
+        for f in flat:                                   # 降级：标注段彻底失败 → 中性值（分数偏低，只能转人工）
             sp = parse.span_of(f["item_id"])
             labeled.append({"item_id": f["item_id"], "idx": f["idx"], "block": f["block"],
                             "capability": f["capability"], "evidence": f["evidence"], "relevance": "中",
                             "difficulty": "中", "dimension": None, "reason": "标注段失败，系统中性兜底",
                             "confidence": 0.0, "span_id": sp.span_id if sp else None})
+    return labeled
+
+
+def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
+             eval_id: str | None = None, temperature: float = 0.0) -> tuple[Evaluation, list[str]]:
+    notes: list[str] = []
+    flat = _flat_items(parse)
+
+    # ---------------------------------------------------------- ② 标注
+    labeled, label_meta, label_stats = label_items(parse, job, client, model=model, temperature=temperature)
+    label_res_status = label_meta.validation.status
 
     # ---------------------------------------------------------- ③ 整体判定
     veto_lines = "\n".join(f"  - [{f.id}] {f.name}：{f.rule}" for f in job.hard_filters) or "  （无硬门槛）"
@@ -142,7 +206,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     fit_obj: LlmFitOutput | None = fit_res.obj if fit_res.obj else None
     bonus = bonus_layer(job, parse.text, labeled, compare_obj)
 
-    stage_status = {"label": label_res.status, "compare": compare_res.status, "fit": fit_res.status}
+    stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
         stage_status["questions"] = q_res.status
 
@@ -197,8 +261,13 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         questions_skipped_reason=skipped,
         conflicts=outcome.conflicts,
         model_id=compare_res.meta.model_id, prompt_version=PROMPT_VERSION, temperature=temperature,
-        stages=EvalStages(label=label_res.meta, compare=compare_res.meta, fit=fit_res.meta,
+        stages=EvalStages(label=label_meta, compare=compare_res.meta, fit=fit_res.meta,
                           questions=q_res.meta if q_res else None),
+        labeling=LabelingMeta(
+            method="single" if label_stats["repeats"] <= 1 else "median_majority",
+            repeats=label_stats["repeats"],
+            dimension_agreement_mean=label_stats["dimension_agreement_mean"],
+            per_item_agreement_min=label_stats["per_item_agreement_min"]),
         scoring_snapshot=ScoringSnapshot(
             aggregation=sc.dimension_aggregation, pass_line=sc.pass_line, pass_line_source=sc.pass_line_source,
             band_width=sc.band_width, pass_threshold=sc.pass_line + sc.band_width,

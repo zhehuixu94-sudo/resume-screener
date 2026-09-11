@@ -105,6 +105,9 @@ class Scoring(Strict):
     pass_line_source: Literal["manual_default", "anchor_calibrated"] = "manual_default"
     band_width: float = Field(default=5.0, ge=0, description="三段带：≥线+band 自动达标 / ±band 转人工 / <线−band 自动淘汰")
     dimension_aggregation: Literal["best", "top2_mean"] = "best"
+    labeling_repeats: int = Field(default=1, ge=1, le=9,
+        description="标注阶段重复次数：>1 时取中位数（相关性×难度）+ 维度多数投票，用来压标注噪声。"
+                    "实测：单次跑同一份简历总分极差 10.0，3 次取中位数后 0.0（成本是标注多调 2 次）")
     fallback_keyword_mapping: bool = Field(default=True, description="模型没给维度时是否用维度 keywords 兜底归类")
     confidence_floor: float = Field(default=0.6, ge=0, le=1, description="低于此置信度不自动淘汰")
 

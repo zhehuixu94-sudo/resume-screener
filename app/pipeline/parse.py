@@ -23,6 +23,7 @@ from ..text.anchor import anchor
 from ..text.extract import extract
 from ..text.normalize import Normalized, normalize, page_offsets
 from ..text.quality import field_anomalies, gate
+from ..text.timeline import check_timeline
 
 
 @dataclass
@@ -46,6 +47,7 @@ def parse_resume(path: str, job: JobConfig, client: SiliconFlowClient, *, model:
     norm = normalize(ex.text)
     quality = gate(norm.text, ex.pages)
     quality.field_anomalies = field_anomalies(norm.text)
+    quality.timeline = check_timeline(norm.text)          # 纯规则：起止矛盾/重叠/空档/未来日期
 
     user = TPL_PARSE.format(job_title=job.job_title, jd=job.jd, resume=norm.text)
     result = call_structured(client, stage="parse", system=SYS_PARSE, user=user,

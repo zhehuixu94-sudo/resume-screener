@@ -119,6 +119,13 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
                      f"<tbody><tr><td><ul>{lst(fit.matched)}</ul></td><td><ul>{lst(fit.partial)}</ul></td>"
                      f"<td><ul>{lst(fit.unmatched)}</ul></td></tr></tbody></table>")
 
+    tl = parse.quality.timeline
+    if tl.status == "issues":
+        timeline_block = ("<p class=meta>⚠️ 发现 <b>" + str(len(tl.issues)) + "</b> 处时间线问题（只提示，不参与自动淘汰）：</p><ul>"
+                          + "".join("<li>" + esc(i.detail) + "</li>" for i in tl.issues[:8]) + "</ul>")
+    else:
+        timeline_block = "<p class=meta>时间线自洽，未发现问题。</p>"
+
     reason_html = "".join(f"<li>{esc(r)}</li>" for r in ev.reasons)
     stage_objs = {"label": ev.stages.label, "compare": ev.stages.compare, "fit": ev.stages.fit,
                   "questions": ev.stages.questions}
@@ -140,11 +147,15 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
   <div class=big style="color:{VERDICT_COLOR.get(ev.verdict, '#555')}">{esc(ev.verdict)} · {esc(DECISION_CN.get(ev.decision, ev.decision))}</div>
   <div class=sub>规则总分 <b>{ev.base_total:.1f}</b> / 达标线 {ev.scoring_snapshot.pass_line:.0f} ±{ev.scoring_snapshot.band_width:.0f}
    ｜ 维度聚合 {esc(ev.scoring_snapshot.aggregation)} ｜ 置信度 {ev.confidence:.2f} ｜ 引用证据 {len(ev.cited_evidence)} 条
-   ｜ 解析质量门禁 {'通过' if ev.quality.gate_passed else '未通过'} ｜ 证据覆盖率 {ev.quality.evidence_coverage*100:.0f}%</div>
+   ｜ 解析质量门禁 {'通过' if ev.quality.gate_passed else '未通过'} ｜ 证据覆盖率 {ev.quality.evidence_coverage*100:.0f}%
+   ｜ 标注 {('单次' if ev.labeling.method == 'single' else f'{ev.labeling.repeats} 次取中位数·维度一致率 {ev.labeling.dimension_agreement_mean}')}</div>
   <ul>{reason_html}</ul>
 </div>
 
-<h2>硬性门槛（一票否决）</h2>
+<h2>时间线自洽校验</h2>
+{timeline_block}
+
+<h2>硬性门槛</h2>
 <table><thead><tr><th>门槛</th><th class=n>结果</th><th>依据</th></tr></thead><tbody>{hf_rows}</tbody></table>
 
 <h2>维度得分</h2>

@@ -450,6 +450,58 @@
       "title": "HardFilterResult",
       "type": "object"
     },
+    "LabelingMeta": {
+      "additionalProperties": false,
+      "description": "这一次评估的标注是怎么得到的（稳定性可追溯）。",
+      "properties": {
+        "method": {
+          "default": "single",
+          "enum": [
+            "single",
+            "median_majority"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "repeats": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Repeats",
+          "type": "integer"
+        },
+        "dimension_agreement_mean": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "同一份解析多次标注时，条目维度归属的平均一致率；<0.8 说明维度划分本身不稳",
+          "title": "Dimension Agreement Mean"
+        },
+        "per_item_agreement_min": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Per Item Agreement Min"
+        }
+      },
+      "title": "LabelingMeta",
+      "type": "object"
+    },
     "LlmCompareOutput": {
       "properties": {
         "verdict": {
@@ -1091,6 +1143,9 @@
     },
     "stages": {
       "$ref": "#/$defs/EvalStages"
+    },
+    "labeling": {
+      "$ref": "#/$defs/LabelingMeta"
     },
     "scoring_snapshot": {
       "$ref": "#/$defs/ScoringSnapshot"

@@ -72,7 +72,9 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
     # 1) 解析：只要还没拿到解析结果（包括被 kill 在 parsing 中途的）就重新解析
     parse: ResumeParse | None = None
     has_parse = db.fetch_one("SELECT 1 AS ok FROM resume_parse WHERE resume_id = %s", (resume_id,)) is not None
-    need_parse = force or state in ("pending_parse", "parsing", "parse_failed") or not has_parse
+    # 解析是"简历的属性"，与岗位/配置无关：已有解析结果就复用（换配置只重跑评估，省一次调用、分数也可比）。
+    # 要重解析用 --force；被 kill 在 parsing 中途、或解析失败的行因为 has_parse 为假会自动重解析。
+    need_parse = force or not has_parse
     if need_parse:
         meta = db.fetch_one("SELECT file_path FROM resume WHERE resume_id = %s", (resume_id,))
         path = (meta or {}).get("file_path") or ""

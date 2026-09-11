@@ -22,6 +22,7 @@ from .evaluation import (
     Evaluation,
     EvalStages,
     HardFilterResult,
+    LabelingMeta,
     ScoringSnapshot,
     UnmappedItem,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "FitItem",
     "HardFilter",
     "HardFilterResult",
+    "LabelingMeta",
     "JobConfig",
     "LlmCompareOutput",
     "LlmFitOutput",
