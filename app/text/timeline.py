@@ -45,6 +45,7 @@ class Span:
     line: str
     pos: int
     reversed_: bool = False
+    paired: bool = False            # False = 单个孤立日期（如"获奖时间 2024"），不参与区间类判断
 
 
 def _to_month(y: str, m: str | None) -> tuple[int, int]:
@@ -81,14 +82,14 @@ def extract_spans(text: str) -> list[Span]:
                 b = _to_month(nxt.group("y"), nxt.group("m"))
                 raw = line[m.start():nxt.end()]
                 spans.append(Span(kind=kind, start=a, end=b, raw=raw, line=line, pos=line_m.start() + m.start(),
-                                  reversed_=_index([a])[0] > _index([b])[0]))
+                                  reversed_=_index([a])[0] > _index([b])[0], paired=True))
                 i += 2
                 continue
             # ② 分隔符 + 至今
             pm = PRESENT_RE.match(line[m.end():])
             if pm:
                 spans.append(Span(kind=kind, start=a, end=None, raw=line[m.start():m.end() + pm.end()],
-                                  line=line, pos=line_m.start() + m.start()))
+                                  line=line, pos=line_m.start() + m.start(), paired=True))
                 i += 1
                 continue
             # ③ 单个日期（可能只是"获奖时间"这类，仅供参考，不参与区间校验）
@@ -109,35 +110,44 @@ def check_timeline(text: str, *, today: date | None = None, gap_months: int = GA
         if s.reversed_:
             issues.append(TimelineIssue(kind="reversed_range",
                                         detail=f"起止矛盾：{s.raw}（{s.line[:40]}）"))
-        if s.end and _index([s.end])[0] > now_idx:
+        if s.paired and s.end and _index([s.end])[0] > now_idx:
             issues.append(TimelineIssue(kind="future_date",
                                         detail=f"结束时间在未来：{s.raw}（{s.line[:40]}）"))
 
-    # 同类型经历：重叠
+    # 同类型经历：重叠。
+    # 只比较**不同行**的两条经历 —— PDF/DOCX 会把多段经历挤在同一行（表格拍平），
+    # 同一行里的多个区间属于不同字段，互相比较必然产生大量假重叠（实测 6 处假阳性）。
     for kind in {s.kind for s in spans}:
-        group = sorted([s for s in spans if s.kind == kind and s.end and not s.reversed_],
+        group = sorted([s for s in spans if s.kind == kind and s.paired and s.end and not s.reversed_],
                        key=lambda x: _index([x.start])[0])
+        hits: list[tuple[int, int, int]] = []
         for i in range(len(group) - 1):
             for j in range(i + 1, len(group)):
                 a, b = group[i], group[j]
-                a_start, a_end = _index([a.start])[0], _index([a.end])[0]
-                b_start, b_end = _index([b.start])[0], _index([b.end])[0]
-                ov = min(a_end, b_end) - max(a_start, b_start)
+                if a.line == b.line:
+                    continue
+                ov = min(_index([a.end])[0], _index([b.end])[0]) - max(_index([a.start])[0], _index([b.start])[0])
                 if ov >= overlap_months:
-                    issues.append(TimelineIssue(
-                        kind="overlap",
-                        detail=f"{kind}经历时间重叠约 {ov} 个月：{a.raw} 与 {b.raw}"))
-
-    # 连续经历之间的大空档（只对工作/实习/教育看）
-    career = sorted([s for s in spans if s.kind in ("工作", "实习", "教育") and s.end and not s.reversed_],
-                    key=lambda x: _index([x.start])[0])
-    for i in range(len(career) - 1):
-        end_i = _index([career[i].end])[0]
-        start_j = _index([career[i + 1].start])[0]
-        if start_j - end_i > gap_months:
+                    hits.append((ov, i, j))
+        for ov, i, j in sorted(hits, reverse=True)[:3]:                 # 同类问题最多报 3 处，避免刷屏
             issues.append(TimelineIssue(
-                kind="gap",
-                detail=f"经历空档约 {start_j - end_i} 个月：{career[i].raw} 之后到 {career[i + 1].raw}"))
+                kind="overlap",
+                detail=f"{kind}经历时间重叠约 {ov} 个月：{group[i].raw} 与 {group[j].raw}"))
+
+    # 连续经历之间的大空档（只对工作/实习/教育看；同样只比不同行）
+    career = sorted([s for s in spans if s.kind in ("工作", "实习", "教育") and s.paired and s.end and not s.reversed_],
+                    key=lambda x: _index([x.start])[0])
+    gaps: list[tuple[int, str, str]] = []
+    for i in range(len(career) - 1):
+        for j in range(i + 1, len(career)):
+            if career[j].start <= career[i].end or career[i].line == career[j].line:
+                continue
+            gap = _index([career[j].start])[0] - _index([career[i].end])[0]
+            if gap > gap_months:
+                gaps.append((gap, career[i].raw, career[j].raw))
+            break
+    for gap, a_raw, b_raw in sorted(gaps, reverse=True)[:2]:
+        issues.append(TimelineIssue(kind="gap", detail=f"经历空档约 {gap} 个月：{a_raw} 之后到 {b_raw}"))
 
     return TimelineCheck(status="issues" if issues else "ok", issues=issues)
 

@@ -44,10 +44,7 @@ def gate(text: str, pages: int) -> Quality:
 
 
 def field_anomalies(text: str) -> list[FieldAnomaly]:
-    """字段级异常检测（任务 5 的落点，占位实现：职位名乱码/异常短行）。"""
-    out: list[FieldAnomaly] = []
-    for line in text.split("\n"):
-        s = line.strip()
-        if 0 < len(s) <= 8 and re.search(r"[\ufffd\u25a1]", s):
-            out.append(FieldAnomaly(field="文本行", detail=f"疑似乱码片段：{s!r}", severity="error"))
-    return out
+    """字段级异常检测：转交 app/text/fields.py（六类检查，逐字段体检，只提示不拦截）。"""
+    from .fields import detect_anomalies
+
+    return detect_anomalies(text)

@@ -12,6 +12,7 @@ import html as _html
 from .contracts.evaluation import Evaluation
 from .contracts.resume_parse import ResumeParse
 from .text.anchor import highlight
+from .text.fields import summarize as summarize_anomalies
 
 
 def esc(x) -> str:
@@ -119,6 +120,12 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
                      f"<tbody><tr><td><ul>{lst(fit.matched)}</ul></td><td><ul>{lst(fit.partial)}</ul></td>"
                      f"<td><ul>{lst(fit.unmatched)}</ul></td></tr></tbody></table>")
 
+    anomalies = parse.quality.field_anomalies or []
+    anomaly_err, anomaly_warn = summarize_anomalies(anomalies)
+    anomaly_block = ("<ul>" + "".join(
+        f"<li>{'❌' if a.severity == 'error' else '⚠️'} {esc(a.field)}：{esc(a.detail)}</li>"
+        for a in anomalies[:10]) + "</ul>") if anomalies else "<p class=meta>未发现字段级异常。</p>"
+
     tl = parse.quality.timeline
     if tl.status == "issues":
         timeline_block = ("<p class=meta>⚠️ 发现 <b>" + str(len(tl.issues)) + "</b> 处时间线问题（只提示，不参与自动淘汰）：</p><ul>"
@@ -151,6 +158,12 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
    ｜ 标注 {('单次' if ev.labeling.method == 'single' else f'{ev.labeling.repeats} 次取中位数·维度一致率 {ev.labeling.dimension_agreement_mean}')}</div>
   <ul>{reason_html}</ul>
 </div>
+
+<h2>解析质量与字段级异常</h2>
+<p class=meta>质量门禁：{'通过' if ev.quality.gate_passed else '未通过' + str(ev.quality.issues)}
+｜ 可点开的证据覆盖率 {ev.quality.evidence_coverage*100:.0f}%（{ev.quality.unanchored_items} 条未锚定）
+｜ 字段级异常 {anomaly_err} 个严重 / {anomaly_warn} 个提醒</p>
+{anomaly_block}
 
 <h2>时间线自洽校验</h2>
 {timeline_block}
