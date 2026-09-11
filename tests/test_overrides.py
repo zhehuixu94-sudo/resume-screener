@@ -112,3 +112,21 @@ def test_硬门槛引用的证据必须进cited_evidence():
         raise AssertionError("引用了不存在的 span 竟然通过了契约校验")
     except Exception as e:
         assert "ev_9999" in str(e)
+
+
+def test_面试题跳过只信规则层():
+    """回归：100 份跑批时模型有 6 次自称"触发硬性门槛"（借口是专业不对口），
+    而规则层对 100 份全部判定 major=pass —— 采信模型自述会白吞这些人的面试题。"""
+    from app.contracts import HardFilterResult
+    from app.pipeline.evaluate import questions_skip_reason
+
+    ok = [HardFilterResult(id="major", name="专业对口", rule="计算机类相关专业", veto=True,
+                           result="pass", reason="简历全文命中：软件工程", evidence_span_ids=["ev_0001"])]
+    reason, notes = questions_skip_reason(ok, {"veto_triggered": "候选人专业不对口", "veto_filter_ids": ["major"]})
+    assert reason == "", "规则层没触发门槛，却因模型自述跳过了面试题"
+    assert any("模型自称" in n for n in notes), "模型自述与规则层结论冲突时必须留痕"
+
+    bad = [HardFilterResult(id="major", name="专业对口", rule="计算机类相关专业", veto=True,
+                            result="fail", reason="简历全文未命中任一关键词", evidence_span_ids=[])]
+    reason2, _ = questions_skip_reason(bad, None)
+    assert "major" in reason2, "规则层真触发时必须跳过，且理由要写规则层的结论"

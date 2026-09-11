@@ -153,6 +153,22 @@ def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict]
     return labeled
 
 
+def questions_skip_reason(hard: list[HardFilterResult], compare_data: dict | None) -> tuple[str, list[str]]:
+    """面试题是否跳过：**只看规则层的门槛结论**，返回 (跳过原因, 备注)。
+
+    为什么不信模型的 veto 自述：实测 100 份里模型有 6 次自称"触发硬性门槛"（理由是"专业不对口"），
+    而规则层按配置关键词对 100 份全部判定 major=pass。采信模型自述会直接吞掉这些人的面试题。
+    """
+    notes: list[str] = []
+    rule_veto = [h for h in hard if h.veto and h.result == "fail"]
+    if rule_veto:
+        return "规则层硬门槛未通过（" + "、".join(h.id for h in rule_veto) + "），不出面试题", notes
+    md = compare_data or {}
+    if md.get("veto_triggered") or md.get("veto_filter_ids"):
+        notes.append("模型自称触发硬门槛、规则层判定未触发：已按规则层结论继续出题（自述见 llm_compare）")
+    return "", notes
+
+
 def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
              eval_id: str | None = None, temperature: float = 0.0) -> tuple[Evaluation, list[str]]:
     notes: list[str] = []
@@ -182,14 +198,16 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                               prompt_hash=hash_of(SYS_FIT, TPL_FIT), config_version=job.config_version,
                               model=model, max_tokens=3000, temperature=temperature)
 
+    # ---------------------------------------------------------- 规则层入口（提前：面试题是否出题要听规则层的）
+    compare_obj: LlmCompareOutput | None = compare_res.obj if compare_res.obj else None
+    fit_obj: LlmFitOutput | None = fit_res.obj if fit_res.obj else None
+    hard = check_hard_filters(job, parse, compare_obj)
+
     # ---------------------------------------------------------- ⑤ 面试题
-    skipped = ""
+    skipped, q_notes = questions_skip_reason(hard, compare_res.data)
+    notes.extend(q_notes)
     q_res = None
-    veto_text = compare_res.data.get("veto_triggered") if compare_res.data else None
-    veto_ids = compare_res.data.get("veto_filter_ids", []) if compare_res.data else []
-    if veto_text or veto_ids:
-        skipped = f"触发硬性门槛（{veto_text or '、'.join(veto_ids)}），不出面试题"
-    else:
+    if not skipped:
         strong = [i for i in labeled if i["relevance"] in ("强", "中") and i["difficulty"] in ("高", "中")]
         strong = strong[:3] or labeled[:3]
         q_user = TPL_Q.format(job_title=job.job_title, jd=job.jd, focus=job.interview_focus,
@@ -202,16 +220,11 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
 
     # ---------------------------------------------------------- 规则层
     rules = rule_layer(job, labeled)
-    compare_obj: LlmCompareOutput | None = compare_res.obj if compare_res.obj else None
-    fit_obj: LlmFitOutput | None = fit_res.obj if fit_res.obj else None
     bonus = bonus_layer(job, parse.text, labeled, compare_obj)
 
     stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
         stage_status["questions"] = q_res.status
-
-    # 硬门槛：规则层按配置关键词预检（模型只负责解释与给证据，不允许它随手把门槛标成触发）
-    hard = check_hard_filters(job, parse, compare_obj)
 
     # ---------------------------------------------------------- 证据引用
     # 注意：硬门槛命中的证据也要进 cited_evidence —— 它可能不被任何能力项引用，
