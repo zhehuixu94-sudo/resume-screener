@@ -197,6 +197,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     if not cover.ok:
         notes.append("取证段失败：本次评估未做维度覆盖校验，判据按原有条目计算")
     span_map = dict(cover.span_map)
+    pool = cover.span_pool(parse)          # 解析证据 + 取证证据的统一池（门槛/加分/引用都用它）
 
     # ---------------------------------------------------------- ② 标注
     labeled, label_meta, label_stats = label_items(parse, job, client, model=model, temperature=temperature,
@@ -255,7 +256,6 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     # ---------------------------------------------------------- 证据引用
     # 注意：硬门槛命中的证据也要进 cited_evidence —— 它可能不被任何能力项引用，
     # 但契约要求"引用了就必须能查到"（100 份跑批时就是这里漏了，导致整份评估校验失败）。
-    pool = cover.span_pool(parse)
     cited: list[CitedEvidence] = []
     seen: set[str] = set()
     for sid in [sid for h in hard for sid in h.evidence_span_ids]:
