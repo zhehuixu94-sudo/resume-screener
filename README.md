@@ -3,7 +3,7 @@
 > 用 LLM 帮 HR 把一批简历判成「达标 / 转人工 / 淘汰」，**每个结论都能点开原文证据**。
 > 定位是**排除器，不是择优器**：成功标准不是「排得准」，而是「没把该留的人刷掉」。
 
-个人项目（网络空间安全本科毕业设计方向 / 求职作品集），当前处于**任务 1 已完成、任务 2 在做的阶段**。
+个人项目（网络空间安全本科毕业设计方向 / 求职作品集），当前处于**任务 1、任务 2（M0 闭环）已完成并实测验收的阶段**。
 
 ---
 
@@ -49,10 +49,22 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 | 任务 | 状态 | 说明 |
 |---|---|---|
 | 任务 1 数据契约三件套 | ✅ 完成并验收 | 8 个 JSON Schema（Pydantic 导出）、四级证据锚定、校验四态（ok/repaired/degraded/failed）、三段带双通道判定 |
-| 任务 2 M0 最小闭环 | 🚧 进行中 | 单份已能端到端跑通；批处理、状态机与落库待补 |
-| 任务 3 锚点标定达标线 | ⏳ 契约已留位 | `JobConfig.calibration` / `scoring.pass_line_source` |
+| 任务 2 M0 最小闭环 | ✅ 验收达标（CLI + HTML 报告路线） | 落库（PG + pgvector）、状态机、幂等与断点续跑、10 份批量、证据可点开的报告都已实测；FastAPI 骨架与最小 UI 未做 |
+| 任务 3 锚点标定达标线 | ⏳ 契约已留位（下一件要做的事） | `JobConfig.calibration` / `scoring.pass_line_source` |
 | 任务 4 规则分稳定性 | ⏳ 契约已留开关 | `scoring.dimension_aggregation = best / top2_mean`（默认仍是 best） |
 | 任务 5 时间线 / 字段级校验 | ⏳ 契约已留位 | `quality.timeline`、`quality.field_anomalies` |
+
+### 任务 2 的实测结果（10 份简历 × 安全服务岗，2~3 并发）
+
+| 验收项 | 结果 |
+|---|---|
+| 10 份批量跑通 | 10/10 落库并出报告（4 份真实简历 + 6 份合成简历），75 条证据 span 中 71 条锚定成功（94.7%） |
+| 中途 kill 能续跑 | 实测 kill 进程时库里有 2 行 `parsing`、1 行 `evaluating`、0 份完成评估；重跑同一条命令后全部 `evaluated`，且**不重复计费**（已解析的简历跳过解析、已有评分的跳过评估）、失败次数不被误加 |
+| 每份报告证据可点开 | 11 个 HTML（10 份单人报告 + 批次矩阵）；单人报告 12 个证据链接、7 处高亮锚点，点击链接跳到原文并高亮（已用浏览器实测跳转） |
+| 处置分布 | 转人工 2 / 自动淘汰 8（对口简历 63.9 分落在线内转人工；6 份游戏开发简历方向不符） |
+
+> 顺带暴露一个真实问题：同一份对口简历重复跑会落在达标线两侧（单跑 66.1「达标」vs 批量 63.9「边缘」）——
+> 这正是任务 4（规则分稳定性）要解决的，在切 top2 平均并复测之前，不许进自动淘汰。
 
 ### 任务 1 的实测结果（4 份真实简历 × 安全服务岗）
 
@@ -83,31 +95,71 @@ cp local/resumes.json.example local/resumes.json   # 填自己的简历路径（
 模型：默认 `Qwen/Qwen3.5-122B-A10B`（关思考模式），降本档 `Qwen/Qwen3.5-35B-A3B`，`--model` 可覆盖。
 平台为硅基流动（OpenAI 兼容 HTTP，无第三方 SDK 依赖）。
 
-## 五、目录结构
+## 五、批处理（M0 闭环）
+
+```bash
+# 1) 建表（幂等）
+.venv/Scripts/python tools/init_db.py --show
+
+# 2) 入队：把简历挂到某个岗位配置下（文件或目录都行）
+.venv/Scripts/python -m app.batch enqueue --job config/job_secops.json --resumes "简历目录/"
+
+# 3) 跑：workers 是并发 worker 数；重复执行即断点续跑
+.venv/Scripts/python -m app.batch run --job config/job_secops.json --workers 3
+.venv/Scripts/python -m app.batch status --job config/job_secops.json     # 看状态机分布
+.venv/Scripts/python -m app.batch retry  --job config/job_secops.json     # 卡住/失败的行恢复成可重跑
+
+# 4) 出报告：每份简历一个 HTML（证据可点开原文）+ 批次矩阵
+.venv/Scripts/python -m app.batch report --job config/job_secops.json --outdir out/reports
+```
+
+**状态机**（挂在 `application` 上，进度即状态，断点续跑就查它）：
+
+```
+pending_parse → parsing → parsed → evaluating → evaluated → reviewed
+                    ↓ 失败                ↓ 失败
+              parse_failed          eval_failed        （attempts 到上限后停住等人工）
+```
+
+- **幂等**：`resume` 按文件 sha256 去重、`resume_parse`/`evaluation` 唯一键 + `ON CONFLICT`，重复执行不会多出评分行。
+- **并发安全**：worker 用 `FOR UPDATE SKIP LOCKED` + `locked_at` 原子抢占；处理中不释放锁，
+  被 kill 留下的锁超过 `--lock-timeout` 分钟视为原 worker 已死、可回收（kill 后立刻续跑用 `--lock-timeout 0`）。
+- **不在挂掉的模型上白等**：开跑前 `probe()` 探活主干，失败自动切 `--fallback-model`（实测主干端点会整段时间无响应）。
+
+**存储**：容器 `resume_pg`（`pgvector/pgvector:pg18`，主机 127.0.0.1:5433，库 `resume_screener`，用户 `resume_app`）。
+表：`job_config`（配置版本化）· `resume`（简历实体）· `application`（应聘关系 + 状态机）·
+`resume_parse`（解析结果）· `evidence_span`（证据 span 索引）· `evaluation`（评分行，带 model_id/prompt_hash/config_version）·
+`audit_log`（append-only）· `resume_chunk`（检索层，v1 不写）。
+DSN 走环境变量 `PG_DSN` / `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE`，仓库里没有任何凭据。
+
+## 六、目录结构
 
 ```
 app/
   contracts/   三件套 + 五段模型输出契约（Pydantic）+ 清洗层（枚举归一/垃圾值剔除/未知字段留痕）
   text/        抽取 · 规范化与偏移映射 · 四级锚定 · 质量门禁
-  llm/         硅基流动客户端 · 五段 prompt · 校验-重试-降级引擎 · 清洗器
+  llm/         硅基流动客户端（含探活）· 五段 prompt · 校验-重试-降级引擎 · 清洗器
   pipeline/    解析段 · 标注/判定/匹配度/面试题 + 规则层与三段带判定
+  store/       Postgres schema + repository（状态机 / 幂等 / 审计日志）
+  batch.py     批处理 CLI（入队 / 跑 / 续跑 / 出报告）
+  report.py    单人报告（证据可点开）+ 批次矩阵
 schemas/       由 Pydantic 导出的 JSON Schema（含 5 段模型输出契约）
 config/        6 个岗位配置（硬门槛 / 维度锚点 / 加分项关键词 / 达标线与标定）
 tools/         导出 schema · 迁移配置 · 契约验收
 tests/         契约、锚定、判定策略的回归测试
 ```
 
-## 六、不提交什么
+## 七、不提交什么
 
 - `local/`（真实简历路径清单）、`out/`（报告与运行产物，含真实简历原文）、`.venv/`
 - 任何密钥：代码只从环境变量 `SILICONFLOW_API_KEY` 或本机密钥文件读，仓库里没有 key
 
-## 七、免责声明
+## 八、免责声明
 
 本系统是**辅助工具**，输出的判定与分数**仅供参考，不参与录用决策**，结论必须由 HR 复核。
 简历含个人信息：默认本地留存，对外发送前必须脱敏。
 
-## 八、技术栈
+## 九、技术栈
 
-Python 3.11 · Pydantic v2 · JSON Schema · FastAPI（任务 2 起）· PostgreSQL 16 + pgvector（任务 2 起）·
-Vue3 + Vite（构建 target Chrome 109，任务 2 起）· 硅基流动（LLM / Embedding / Reranker）
+Python 3.11 · Pydantic v2 · JSON Schema · psycopg 3 · PostgreSQL + pgvector（容器 pgvector/pgvector:pg18）·
+硅基流动（LLM / Embedding / Reranker）· FastAPI + Vue3/Vite（构建 target Chrome 109，客户端层待做）

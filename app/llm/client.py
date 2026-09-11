@@ -71,6 +71,22 @@ class SiliconFlowClient:
             headers = {k.lower(): v for k, v in r.headers.items()}
         return payload, headers
 
+    # ------------------------------------------------------------ 探活
+    def probe(self, model: str | None = None, timeout: int = 20) -> bool:
+        """极小请求探活：能拿到 content 就算可用。批处理开跑前用它挑模型。"""
+        try:
+            body = {"model": model or self.model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 4, "temperature": 0.0, "enable_thinking": False}
+            req = urllib.request.Request(API_URL, data=json.dumps(body).encode(), method="POST")
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                payload = json.loads(r.read().decode())
+            return bool(payload.get("choices"))
+        except Exception:                                     # noqa: BLE001
+            return False
+
     # ------------------------------------------------------------ chat
     def chat(self, system: str, user: str, *, model: str | None = None, max_tokens: int = 4000,
              temperature: float = 0.0, json_mode: bool = True,
