@@ -133,6 +133,11 @@ class Scoring(Strict):
                     "实测：单次跑同一份简历总分极差 10.0，3 次取中位数后 0.0（成本是标注多调 2 次）")
     fallback_keyword_mapping: bool = Field(default=True, description="模型没给维度时是否用维度 keywords 兜底归类")
     confidence_floor: float = Field(default=0.6, ge=0, le=1, description="低于此置信度不自动淘汰")
+    reject_border_when_low: bool = Field(
+        default=False,
+        description="模型整体判「边缘」但规则分低于线−band 时，是否允许自动淘汰。"
+                    "默认 False（保守：印象没说不行就不自动淘汰）。开启能把人工队列压下来，"
+                    "代价是漏放风险上升——务必配合阶段 5 的随机抽检来测漏放率。")
 
 
 class JobConfig(Strict):

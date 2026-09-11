@@ -252,6 +252,23 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
                                conflicts=conflicts, hard_filters=hard)
 
     if llm_border:
+        # 政策开关：模型判边缘、但算术分低到线−band 以下 → 允许自动淘汰（默认关）
+        if sc.reject_border_when_low:
+            if base_total < rej_thr:
+                if conf < sc.confidence_floor:
+                    conflicts.append(Conflict(type="low_confidence",
+                                              detail=f"边缘+低分但置信度 {conf} < {sc.confidence_floor}"))
+                    return DecisionOutcome(verdict="边缘", decision="manual_review",
+                                           reason=f"整体边缘且规则分 {base_total} < {rej_thr}，"
+                                                  f"但置信度 {conf} 偏低 → 转人工",
+                                           conflicts=conflicts, hard_filters=hard)
+                conflicts.append(Conflict(type="edge_band_low_reject",
+                                          detail=f"整体边缘但规则分 {base_total} < {rej_thr}"
+                                                 f"（策略 reject_border_when_low=true）"))
+                return DecisionOutcome(verdict="不达标", decision="auto_reject",
+                                       reason=f"整体评估边缘且规则分 {base_total} < {rej_thr}"
+                                              f"（达标线 {sc.pass_line} − {sc.band_width}）→ 按岗位策略自动淘汰，可申诉",
+                                       conflicts=conflicts, hard_filters=hard)
         conflicts.append(Conflict(type="edge_band", detail=f"整体评估=边缘，规则分 {base_total}"))
         return DecisionOutcome(verdict="边缘", decision="manual_review",
                                reason=f"整体评估为边缘（最像 {compare.closest_anchor if compare else '—'} 档）→ 转人工",

@@ -338,6 +338,12 @@
           "minimum": 0,
           "title": "Confidence Floor",
           "type": "number"
+        },
+        "reject_border_when_low": {
+          "default": false,
+          "description": "模型整体判「边缘」但规则分低于线−band 时，是否允许自动淘汰。默认 False（保守：印象没说不行就不自动淘汰）。开启能把人工队列压下来，代价是漏放风险上升——务必配合阶段 5 的随机抽检来测漏放率。",
+          "title": "Reject Border When Low",
+          "type": "boolean"
         }
       },
       "required": [
