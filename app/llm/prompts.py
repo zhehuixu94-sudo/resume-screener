@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import hashlib
 
-PROMPT_VERSION = "p1.1"
+PROMPT_VERSION = "p1.2"
 
 SYS_PARSE = "你是简历结构化解析器。只输出 JSON，不要任何解释文字。"
 SYS_LABEL = "你是招聘评估助手。只输出 JSON，不要任何解释文字。"
 SYS_COMPARE = "你是资深招聘评审。只输出 JSON，不要任何解释文字。"
 SYS_FIT = "你是招聘匹配度分析员。只输出 JSON，不要任何解释文字。"
 SYS_Q = "你是技术面试官。只输出 JSON，不要任何解释文字。"
+SYS_COVER = "你是简历证据检索员。只输出 JSON，不要任何解释文字。"
 
 TPL_PARSE = """【岗位】{job_title}
 【岗位要求摘要】{jd}
@@ -52,6 +53,27 @@ TPL_LABEL = """【岗位】{job_title}
 {{"items":[{{"idx":1,"block":"所属块标题","capability":"能力项名称","evidence":"原文片段",
   "relevance":"强","difficulty":"中","dimension":"维度id","reason":"为什么这么标","confidence":0.8}}]}}
 要求：items 的条数与给你的一致，idx 必须对应，不许增删条目。"""
+
+TPL_COVER = """【岗位】{job_title}
+【岗位要求摘要】{jd}
+
+【评估维度】（每个维度都必须给出结论，不许漏）
+{dim_lines}
+
+【简历全文】
+{resume}
+
+任务：**逐个维度**在这份简历里找支撑证据。每个维度都要有结论：
+- 找到证据：found=true，items 里给 1~3 条，每条 = 能力项名称 + 简历原文里的**连续片段**（≤60 字，不得改写、不得拼接不同位置的句子）；
+- 找不到：found=false，items 为空，note 里一句话说明"简历里没有哪方面的内容"（不要编造，也不要拿相近内容硬凑）。
+
+判据提示：证据要能**直接支撑**该维度（例如"项目完整度"看的是有没有完整交付过东西，
+"学习与竞赛"看的是竞赛/获奖/自学产出）。同一个片段不要重复塞给多个维度，
+除非它确实同时支撑多个维度（那就分别列出，各自说明用途）。
+
+输出 JSON：
+{{"dimensions":[{{"id":"维度id","found":true,"note":"","items":[{{"capability":"能力项名称","evidence":"原文片段"}}]}}]}}
+要求：dimensions 必须覆盖上面列出的**每一个** id，顺序与上面一致。"""
 
 TPL_COMPARE = """【岗位】{job_title}
 【岗位要求】

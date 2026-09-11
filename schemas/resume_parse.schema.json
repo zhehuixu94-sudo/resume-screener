@@ -503,6 +503,7 @@
         "stage": {
           "enum": [
             "parse",
+            "cover",
             "label",
             "compare",
             "fit",

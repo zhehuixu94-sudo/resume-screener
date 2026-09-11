@@ -23,7 +23,7 @@ AnchorLevel = Literal["合格", "边缘", "不达标"]
 FitVerdict = Literal["对口", "部分对口", "方向不符"]
 QLevel = Literal["基础盘", "深度", "上限"]
 Decision = Literal["auto_pass", "manual_review", "auto_reject"]
-StageName = Literal["parse", "label", "compare", "fit", "questions"]
+StageName = Literal["parse", "cover", "label", "compare", "fit", "questions"]
 ValidationStatus = Literal["ok", "repaired", "degraded", "failed"]
 AnchorMethod = Literal["exact", "ws_insensitive", "fuzzy", "none"]
 

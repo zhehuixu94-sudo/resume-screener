@@ -154,6 +154,41 @@
       "title": "Conflict",
       "type": "object"
     },
+    "DimensionCoverage": {
+      "additionalProperties": false,
+      "description": "一个维度的取证结果（供报告显示\"该维度无证据\"与后续统计覆盖率）。",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "found": {
+          "default": false,
+          "title": "Found",
+          "type": "boolean"
+        },
+        "n_items": {
+          "default": 0,
+          "title": "N Items",
+          "type": "integer"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "DimensionCoverage",
+      "type": "object"
+    },
     "DimensionItemScore": {
       "additionalProperties": false,
       "description": "进维度分的单条能力项：单项分 = 相关性系数 × 难度系数（解释标签，非模型直接打的分）。",
@@ -359,6 +394,17 @@
     "EvalStages": {
       "additionalProperties": false,
       "properties": {
+        "cover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageMeta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "label": {
           "$ref": "#/$defs/StageMeta"
         },
@@ -768,6 +814,7 @@
         "stage": {
           "enum": [
             "parse",
+            "cover",
             "label",
             "compare",
             "fit",
@@ -1060,6 +1107,14 @@
       },
       "minItems": 1,
       "title": "Dimensions",
+      "type": "array"
+    },
+    "coverage": {
+      "description": "按维度定向取证：found=false 即该维度无证据",
+      "items": {
+        "$ref": "#/$defs/DimensionCoverage"
+      },
+      "title": "Coverage",
       "type": "array"
     },
     "base_total": {

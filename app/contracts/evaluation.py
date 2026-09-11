@@ -103,6 +103,16 @@ class CitedEvidence(Strict):
     anchor_method: Literal["exact", "ws_insensitive", "fuzzy", "none"] = "none"
 
 
+# ---------------------------------------------------------------- 维度覆盖（定向取证）
+class DimensionCoverage(Strict):
+    """一个维度的取证结果（供报告显示"该维度无证据"与后续统计覆盖率）。"""
+    id: str
+    name: str = ""
+    found: bool = False
+    n_items: int = 0
+    note: str = ""
+
+
 # ---------------------------------------------------------------- 冲突与降级
 ConflictType = Literal[
     "llm_vs_rule",          # 整体评估与规则分打架
@@ -154,6 +164,7 @@ class EvalQuality(Strict):
 
 
 class EvalStages(Strict):
+    cover: StageMeta | None = None      # 按维度定向取证（把"该维度无证据"变成显式结论）
     label: StageMeta
     compare: StageMeta
     fit: StageMeta
@@ -180,6 +191,8 @@ class Evaluation(Strict):
     # ---- 硬门槛 / 维度分数 / 匹配度
     hard_filters: list[HardFilterResult] = Field(default_factory=list)
     dimensions: list[DimensionScore] = Field(min_length=1)
+    coverage: list[DimensionCoverage] = Field(default_factory=list,
+                                              description="按维度定向取证：found=false 即该维度无证据")
     base_total: float = Field(ge=0.0, description="规则层总分（不含加分项）；与达标线比较的就是它")
     bonus_hits: list[BonusHit] = Field(default_factory=list)
     bonus_points: float = Field(default=0.0, ge=0.0)

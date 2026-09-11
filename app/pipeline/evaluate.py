@@ -54,6 +54,7 @@ from ..llm.prompts import (
     render_items,
 )
 from ..llm.structured import call_structured
+from .cover import CoverOutcome, cover_dimensions
 from .hard_filters import check_hard_filters
 from .rules import RELEVANCE_W, DIFFICULTY_W, bonus_layer, decide, rule_layer, sync_decisions_with_evidence
 
@@ -105,13 +106,27 @@ def _merge_label_runs(runs: list[list[dict]]) -> tuple[list[dict], dict]:
     return merged, stats
 
 
+def _span_id_of(item_id: str, parse: ResumeParse, span_map: dict[str, str]) -> str | None:
+    """先查解析阶段锚好的 span，再查外部（定向取证）带来的 span。"""
+    sp = parse.span_of(item_id)
+    if sp is not None:
+        return sp.span_id
+    return span_map.get(item_id) or None
+
+
 def label_items(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
-                temperature: float = 0.0, repeats: int | None = None) -> tuple[list[dict], object, dict]:
+                temperature: float = 0.0, repeats: int | None = None,
+                extra_items: list[dict] | None = None,
+                span_map: dict[str, str] | None = None) -> tuple[list[dict], object, dict]:
     """标注段（可单独调用）：返回（对齐到解析条目的标注结果, StageMeta）。
 
     抽出来是为了做稳定性实验 —— 同一份解析结果重复标注 N 次，才能把"标注噪声"和"解析噪声"分开。
     """
     flat = _flat_items(parse)
+    for extra in (extra_items or []):                      # 定向取证带来的条目，一起交给标注段
+        extra = dict(extra)
+        extra["idx"] = len(flat) + 1
+        flat.append(extra)
     by_idx = {f["idx"]: f for f in flat}
     dim_desc = "\n".join(f'  {d.id} = {d.name}' for d in job.dimensions)
     label_user = TPL_LABEL.format(job_title=job.job_title, dim_ids=", ".join(job.dimension_ids),
@@ -125,7 +140,7 @@ def label_items(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *
                               prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_LABEL, TPL_LABEL),
                               config_version=job.config_version, model=model, max_tokens=6000,
                               temperature=temperature, dynamic_check=make_label_check(flat, job))
-        runs.append(_parse_label_payload(res, by_idx, parse, flat))
+        runs.append(_parse_label_payload(res, by_idx, parse, flat, span_map or {}))
     if len(runs) == 1:
         merged, stats = runs[0], {"repeats": 1, "dimension_agreement_mean": None, "per_item_agreement_min": None}
     else:
@@ -133,23 +148,24 @@ def label_items(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *
     return merged, res.meta, stats
 
 
-def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict]) -> list[dict]:
+def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict],
+                         span_map: dict[str, str] | None = None) -> list[dict]:
     labeled: list[dict] = []
     if res.obj is not None:
         for it in res.obj.items:
             src = by_idx[int(it.idx)]
-            sp = parse.span_of(src["item_id"])
+            sid = _span_id_of(src["item_id"], parse, span_map or {})
             labeled.append({"item_id": src["item_id"], "idx": int(it.idx), "block": it.block,
                             "capability": it.capability, "evidence": it.evidence, "relevance": it.relevance,
                             "difficulty": it.difficulty, "dimension": it.dimension, "reason": it.reason,
-                            "confidence": it.confidence, "span_id": sp.span_id if sp else None})
+                            "confidence": it.confidence, "span_id": sid})
     else:
         for f in flat:                                   # 降级：标注段彻底失败 → 中性值（分数偏低，只能转人工）
-            sp = parse.span_of(f["item_id"])
+            sp = _span_id_of(f["item_id"], parse, span_map or {})
             labeled.append({"item_id": f["item_id"], "idx": f["idx"], "block": f["block"],
                             "capability": f["capability"], "evidence": f["evidence"], "relevance": "中",
                             "difficulty": "中", "dimension": None, "reason": "标注段失败，系统中性兜底",
-                            "confidence": 0.0, "span_id": sp.span_id if sp else None})
+                            "confidence": 0.0, "span_id": sp})
     return labeled
 
 
@@ -174,8 +190,18 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     notes: list[str] = []
     flat = _flat_items(parse)
 
+    # ---------------------------------------------------------- ①b 按维度定向取证
+    # 解析阶段的条目抽取与岗位无关（那是简历属性、跨岗位复用），所以它不知道岗位有哪些评分维度，
+    # 导致部分维度整段无条目（实测 6 维里 3 维对 7 成简历为空）。这里补一次岗位相关的定向取证。
+    cover = cover_dimensions(job, parse, client, model=model, temperature=temperature)
+    if not cover.ok:
+        notes.append("取证段失败：本次评估未做维度覆盖校验，判据按原有条目计算")
+    span_map = dict(cover.span_map)
+
     # ---------------------------------------------------------- ② 标注
-    labeled, label_meta, label_stats = label_items(parse, job, client, model=model, temperature=temperature)
+    labeled, label_meta, label_stats = label_items(parse, job, client, model=model, temperature=temperature,
+                                                   extra_items=cover.items if cover.ok else None,
+                                                   span_map=span_map)
     label_res_status = label_meta.validation.status
 
     # ---------------------------------------------------------- ③ 整体判定
@@ -220,7 +246,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
 
     # ---------------------------------------------------------- 规则层
     rules = rule_layer(job, labeled)
-    bonus = bonus_layer(job, parse, labeled)   # 匹配池只含简历原文+已锚定证据，模型的话不算（见 rules.bonus_layer）
+    bonus = bonus_layer(job, parse, labeled, spans=pool)   # 匹配池只含简历原文+已锚定证据，模型的话不算（见 rules.bonus_layer）
 
     stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
@@ -229,10 +255,11 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     # ---------------------------------------------------------- 证据引用
     # 注意：硬门槛命中的证据也要进 cited_evidence —— 它可能不被任何能力项引用，
     # 但契约要求"引用了就必须能查到"（100 份跑批时就是这里漏了，导致整份评估校验失败）。
+    pool = cover.span_pool(parse)
     cited: list[CitedEvidence] = []
     seen: set[str] = set()
     for sid in [sid for h in hard for sid in h.evidence_span_ids]:
-        sp = next((e for e in parse.evidence if e.span_id == sid), None)
+        sp = pool.get(sid)
         if sp and sid not in seen:
             seen.add(sid)
             cited.append(CitedEvidence(span_id=sp.span_id, text=sp.text, span=sp.span, page=sp.page,
@@ -242,7 +269,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         if not sid or sid in seen:
             continue
         seen.add(sid)
-        sp = next((e for e in parse.evidence if e.span_id == sid), None)
+        sp = pool.get(sid)
         if sp is None:
             continue
         cited.append(CitedEvidence(span_id=sp.span_id, text=sp.text, span=sp.span, page=sp.page,
@@ -276,6 +303,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         bonus_hits=bonus, bonus_points=round(sum(b.points for b in bonus), 1),
         total_with_bonus=round(rules.base_total + sum(b.points for b in bonus), 1),
         unmapped_items=rules.unmapped,
+        coverage=cover.coverage,
         fit=fit_obj,
         cited_evidence=cited,
         llm_compare=compare_obj,
@@ -283,7 +311,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         questions_skipped_reason=skipped,
         conflicts=outcome.conflicts,
         model_id=compare_res.meta.model_id, prompt_version=PROMPT_VERSION, temperature=temperature,
-        stages=EvalStages(label=label_meta, compare=compare_res.meta, fit=fit_res.meta,
+        stages=EvalStages(cover=cover.meta, label=label_meta, compare=compare_res.meta, fit=fit_res.meta,
                           questions=q_res.meta if q_res else None),
         labeling=LabelingMeta(
             method="single" if label_stats["repeats"] <= 1 else "median_majority",

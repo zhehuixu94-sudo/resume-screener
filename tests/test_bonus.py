@@ -58,7 +58,9 @@ def test_must_match_要求所有组都满足():
 def test_加分不看模型的话():
     """bonus_layer 的签名里就不该有模型输出——匹配池只能是简历原文 + 已锚定证据。"""
     params = list(inspect.signature(bonus_layer).parameters)
-    assert params == ["job", "parse", "labeled"], f"匹配池不该再接收模型输出，实际参数：{params}"
+    assert "compare" not in params and not any("llm" in p for p in params), \
+        f"匹配池不该再接收模型输出，实际参数：{params}"
+    assert set(params) <= {"job", "parse", "labeled", "spans"}, f"出现了预期外的参数：{params}"
 
     cfg = _cfg([{"name": "上线或可玩作品", "points": 8, "must_match": [["Steam", "上架", "已上线"]]}])
     # 简历原文里没有这些词；即便模型在别处夸了"作品已上线"，也不该加分

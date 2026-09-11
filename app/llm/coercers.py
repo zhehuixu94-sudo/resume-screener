@@ -25,6 +25,7 @@ from ..contracts.coerce import (
 )
 from ..contracts.llm_outputs import (
     LlmCompareOutput,
+    LlmCoverOutput,
     LlmFitOutput,
     LlmLabelOutput,
     LlmParseOutput,
@@ -200,6 +201,44 @@ def coerce_fit(data: dict[str, Any], job: Any = None) -> CoerceResult:
         repairs.append(f"fit_ratio: {data.get('fit_ratio')!r} 与三清单重算值 {ratio} 不符 → 以重算值为准")
     data["fit_ratio"] = ratio
     data["verdict"] = clean_enum(data.get("verdict"), FIT_MAP, "verdict", repairs)
+    return CoerceResult(data=data, repairs=repairs, dropped=dropped)
+
+
+# ---------------------------------------------------------------- ④a 按维度取证
+def coerce_cover(data: dict[str, Any], job: Any = None) -> CoerceResult:
+    """清洗定向取证输出：维度 id 必须落在岗位配置里，证据片段要够长，空维度显式标 found=false。"""
+    repairs: list[str] = []
+    dropped: list[str] = []
+    data = drop_unknown(LlmCoverOutput, data, "", dropped)
+    valid_ids = list(getattr(job, "dimension_ids", []) or [])
+    seen: dict[str, dict] = {}
+    for d in data.get("dimensions") or []:
+        if not isinstance(d, dict):
+            continue
+        did = str(d.get("id") or "").strip()
+        if valid_ids and did not in valid_ids:
+            dropped.append(f"取证维度 id 非法：{did!r}")
+            continue
+        items = []
+        for it in d.get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            ev = collapse_ws(str(it.get("evidence") or ""))
+            cap = str(it.get("capability") or "").strip()
+            if len(ev) < 4 or not cap:
+                dropped.append(f"{did}: 证据过短或缺能力项名")
+                continue
+            items.append({"capability": cap, "evidence": ev[:90]})
+        found = bool(d.get("found")) and bool(items)
+        if bool(d.get("found")) and not items:
+            repairs.append(f"{did}: 标了 found=true 但没给证据 → 记为无证据")
+        seen[did] = {"id": did, "found": found, "note": str(d.get("note") or "")[:200], "items": items[:3]}
+    # 配置里有、模型没答的维度 → 显式补成 found=false（不许静默漏掉一个维度）
+    for did in valid_ids:
+        if did not in seen:
+            seen[did] = {"id": did, "found": False, "note": "模型未给出该维度结论 → 按无证据处理", "items": []}
+            repairs.append(f"{did}: 模型漏答该维度 → 补为无证据")
+    data["dimensions"] = [seen[d] for d in valid_ids] if valid_ids else list(seen.values())
     return CoerceResult(data=data, repairs=repairs, dropped=dropped)
 
 

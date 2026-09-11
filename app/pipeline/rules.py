@@ -83,7 +83,8 @@ def rule_layer(job: JobConfig, labeled: list[dict], *, aggregation: str | None =
     return RuleOutcome(dimensions=dims, unmapped=unmapped, base_total=round(total, 1))
 
 
-def bonus_layer(job: JobConfig, parse: "ResumeParse", labeled: list[dict]) -> list[BonusHit]:
+def bonus_layer(job: JobConfig, parse: "ResumeParse", labeled: list[dict],
+                spans: dict | None = None) -> list[BonusHit]:
     """加分项：**只在简历原文 + 已锚定的证据片段里**匹配关键词。
 
     两条硬规矩（都是实测踩出来的）：
@@ -94,11 +95,13 @@ def bonus_layer(job: JobConfig, parse: "ResumeParse", labeled: list[dict]) -> li
     """
     # 池子：简历原文 + 已锚定条目的证据原文（未锚定的是模型转述，不算）
     pool = [parse.text]
+    # spans：解析证据 + 定向取证证据的合并池（不传时退化为只用解析证据）
+    span_pool = spans if spans is not None else {e.span_id: e for e in parse.evidence}
     for it in labeled:
         sid = it.get("span_id") if isinstance(it, dict) else None
         if not sid:
             continue
-        sp = next((e for e in parse.evidence if e.span_id == sid), None)
+        sp = span_pool.get(sid)
         if sp is not None and sp.anchored:
             pool.append(sp.text)
     low = " ".join(pool).lower()

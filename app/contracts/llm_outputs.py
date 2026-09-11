@@ -96,3 +96,28 @@ class Question(Tolerant):
 
 class LlmQuestionsOutput(Tolerant):
     questions: list[Question] = Field(default_factory=list)
+
+# ---------------------------------------------------------------- 按维度取证（④a）
+class CoverItem(Tolerant):
+    """一条定向取证的结果：能力项 + 简历原文片段。"""
+    capability: str = Field(min_length=1)
+    evidence: str = Field(min_length=4, description="必须是简历原文里的连续片段，不得改写")
+
+
+class CoverDimension(Tolerant):
+    """一个维度的取证结果：found=false 表示"该维度在这份简历里找不到支撑证据"。"""
+    id: str = Field(min_length=1)
+    found: bool = True
+    note: str = ""
+    items: list[CoverItem] = Field(default_factory=list)
+
+
+class LlmCoverOutput(Tolerant):
+    """按岗位维度定向取证的输出。
+
+    为什么需要这一步：实测 100 份语料里，6 个评分维度有 3 个对 7 成简历是空的
+    （项目 31%、游戏理解 29%、学习与竞赛 16% 有证据），原因是解析阶段的条目抽取
+    只按"简历自己强调什么"来抽，不知道岗位有哪些评分维度；分数因此被压在 2~3 个维度上。
+    这一步对每个维度单独问一次"有没有证据"，把缺失变成**显式结论**而不是静默的 0 分。
+    """
+    dimensions: list[CoverDimension] = Field(default_factory=list)
