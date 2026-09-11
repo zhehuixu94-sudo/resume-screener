@@ -36,6 +36,8 @@ STYLE = """<style>
  .big { font-size: 26px; font-weight: 700; }
  .pill { display: inline-block; border: 1px solid var(--border,#e5e5e5); border-radius: 10px;
          padding: 1px 8px; margin: 0 4px 4px 0; font-size: 12px; }
+ .pill.ok { border-color: #1a7f37; color: #1a7f37; }
+ .pill.bad { border-color: #c0392b; color: #c0392b; }
  mark { background: var(--accent, #ffe9a8); color: inherit; padding: 0 2px; border-radius: 2px; }
  mark:target, .un { outline: 2px solid #c98a00; }
  .un { color: var(--muted-foreground,#888); text-decoration: line-through; }
@@ -79,9 +81,21 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
             return f'<span class=un title="{esc("锚定失败：" + c.anchor_method)}">{esc(txt)}</span> <span class=meta>（未锚定，不可点）</span>'
         return f'<a class=ev href="#{esc(c.span_id)}">{esc(txt)}</a>'
 
+    # 维度覆盖（定向取证）：把"该维度无证据"显式写出来，而不是让 0 分默默过去
+    cov_by_dim = {c.id: c for c in (ev.coverage or [])}
+
+    def cov_cell(did: str) -> str:
+        c = cov_by_dim.get(did)
+        if c is None:
+            return "<span class=meta>—</span>"
+        if c.found:
+            return f'<span class="pill ok">有证据 {c.n_items} 条</span>'
+        return f'<span class="pill bad">无证据</span><div class=meta>{esc(c.note[:60])}</div>'
+
     dim_rows = "".join(
         f"<tr><td>{esc(d.name)}<div class=meta>{esc(d.id)}</div></td><td class=n>{d.weight:.0f}</td>"
         f"<td class=n>{d.points:.1f}</td><td class=n>{d.rate*100:.0f}%</td><td class=n>{len(d.items)}</td>"
+        f"<td>{cov_cell(d.id)}</td>"
         f"<td>{ev_link(d.best_span_id)}</td></tr>" for d in ev.dimensions)
 
     item_rows = "".join(
@@ -172,7 +186,8 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
 <table><thead><tr><th>门槛</th><th class=n>结果</th><th>依据</th></tr></thead><tbody>{hf_rows}</tbody></table>
 
 <h2>维度得分</h2>
-<table><thead><tr><th>维度</th><th class=n>权重</th><th class=n>得分</th><th class=n>得分率</th><th class=n>条目</th><th>最强证据（点开看原文）</th></tr></thead><tbody>{dim_rows}</tbody></table>
+<p class=meta>「定向取证」列 = 就该维度单独查过一遍简历证据；<b>无证据</b> 是结论（简历里确实没这方面内容），不是漏抽。</p>
+<table><thead><tr><th>维度</th><th class=n>权重</th><th class=n>得分</th><th class=n>得分率</th><th class=n>条目</th><th>定向取证</th><th>最强证据（点开看原文）</th></tr></thead><tbody>{dim_rows}</tbody></table>
 
 <h2>能力项明细（相关性 × 难度 = 解释标签）</h2>
 <table><thead><tr><th>能力项</th><th class=n>相关性</th><th class=n>难度</th><th class=n>单项分</th><th>原文证据</th></tr></thead><tbody>{item_rows}</tbody></table>

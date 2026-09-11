@@ -127,6 +127,9 @@ def create_app() -> FastAPI:
             payload = r.get("payload") or {}
             ev = payload if isinstance(payload, dict) else {}
             dims = {d["id"]: d["points"] for d in (ev.get("dimensions") or [])}
+            # 定向取证结论：哪些维度查过了、哪些确实没证据（前端要显式展示，不让 0 分默默过去）
+            cov = {c["id"]: {"found": c.get("found"), "n_items": c.get("n_items", 0), "note": c.get("note", "")}
+                   for c in (ev.get("coverage") or [])}
             out.append({
                 "application_id": r["application_id"], "file_name": r["file_name"], "resume_id": r["resume_id"],
                 "state": r["state"], "verdict": r.get("verdict"), "decision": r.get("decision"),
@@ -138,6 +141,7 @@ def create_app() -> FastAPI:
                 "fit": (ev.get("fit") or {}).get("verdict"),
                 "fit_ratio": (ev.get("fit") or {}).get("fit_ratio"),
                 "dim_points": dims,
+                "coverage": cov,
                 "labeling": ev.get("labeling"),
                 "questions": len(ev.get("questions") or []),
                 "quality": ev.get("quality"),

@@ -161,9 +161,17 @@
       <table><thead><tr><th>门槛</th><th>结论</th></tr></thead><tbody>
         <tr v-for="(v, k) in detail.hard_filters" :key="k"><td>{{ k }}</td><td :class="v === 'fail' ? 'bad' : (v === 'unknown' ? 'warn' : 'ok')">{{ hfName(v) }}</td></tr>
       </tbody></table>
-      <h3>维度得分</h3>
-      <table><thead><tr><th>维度</th><th>得分</th></tr></thead><tbody>
-        <tr v-for="(v, k) in detail.dim_points" :key="k"><td>{{ k }}</td><td>{{ v }}</td></tr>
+      <h3>维度得分与定向取证</h3>
+      <p class="meta">「定向取证」= 就该维度单独在简历里查过一遍证据。<b>无证据</b> 是结论（简历里确实没有这方面内容），不是漏抽。</p>
+      <table><thead><tr><th>维度</th><th>得分</th><th>定向取证</th></tr></thead><tbody>
+        <tr v-for="(v, k) in detail.dim_points" :key="k">
+          <td>{{ k }}</td><td>{{ v }}</td>
+          <td>
+            <span v-if="!detail.coverage || !detail.coverage[k]" class="meta">—</span>
+            <span v-else-if="detail.coverage[k].found" class="ok">有证据 {{ detail.coverage[k].n_items }} 条</span>
+            <span v-else class="bad" :title="detail.coverage[k].note">无证据</span>
+          </td>
+        </tr>
       </tbody></table>
       <h3>冲突与转人工理由</h3>
       <p class="meta">{{ (detail.conflicts || []).map(conflictName).join(' / ') || '无' }}</p>
