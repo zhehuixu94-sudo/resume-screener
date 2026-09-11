@@ -1,0 +1,98 @@
+# -*- coding: utf-8 -*-
+"""五段模型输出契约（LLM 侧的"必须返回什么"）。
+
+口径：
+- 这里是**模型必须返回**的字段，校验失败先重试（带错误反馈），仍失败才降级。
+- 枚举被钉死。模型常见的同义写法（"高/较高"、"符合"）由 `app/contracts/coerce.py` 在
+  校验前归一，归一动作记进 ValidationReport.repairs——不静默放过。
+- 所有"可选"字段都满足一条：缺省值与"缺失"的语义一致（如 veto_triggered 缺失 = 未触发）。
+  其余字段一律 required，模型漏字段就是契约违约。
+"""
+from __future__ import annotations
+
+from pydantic import Field
+
+from .common import AnchorLevel, Difficulty, FitVerdict, QLevel, Relevance, Tolerant, Verdict
+
+
+# ---------------------------------------------------------------- ① 解析
+class LlmParseItem(Tolerant):
+    capability: str = Field(min_length=2, description="能力项名称")
+    evidence: str = Field(min_length=4, max_length=80, description="简历原文连续片段，≤60 字，不得改写/拼接")
+    note: str = ""
+
+
+class LlmParseBlock(Tolerant):
+    section: str = Field(min_length=1, description="段落类型：教育背景/项目经历/实习经历/技能/…")
+    title: str = Field(min_length=1)
+    period: str = ""
+    items: list[LlmParseItem] = Field(min_length=1)
+
+
+class LlmParseQuality(Tolerant):
+    sections_found: list[str] = Field(min_length=1)
+    issues: list[str] = Field(default_factory=list)
+
+
+class LlmParseOutput(Tolerant):
+    blocks: list[LlmParseBlock] = Field(min_length=1)
+    parse_quality: LlmParseQuality
+
+
+# ---------------------------------------------------------------- ② 标注
+class LlmLabelItem(Tolerant):
+    idx: int = Field(ge=1, description="对应输入清单的编号，用于对齐，避免顺序错位")
+    block: str = ""
+    capability: str = ""
+    evidence: str = ""
+    relevance: Relevance
+    difficulty: Difficulty
+    dimension: str | None = Field(default=None, description="必须命中岗位配置的维度 id；映射不到时为 null（该条目进 unmapped 单列，不硬塞进权重最高的维度）")
+    reason: str = Field(min_length=2)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class LlmLabelOutput(Tolerant):
+    items: list[LlmLabelItem] = Field(min_length=1)
+
+
+# ---------------------------------------------------------------- ③ 整体判定（相对比较）
+class LlmCompareOutput(Tolerant):
+    verdict: Verdict = Field(description="整体判定：达标 / 边缘 / 不达标")
+    closest_anchor: AnchorLevel = Field(description="最像哪一档锚点")
+    confidence: float = Field(ge=0.0, le=1.0)
+    veto_triggered: str | None = Field(default=None, description="触发硬门槛的人话说明；未触发必须为 null")
+    veto_filter_ids: list[str] = Field(default_factory=list,
+                                       description="被触发的硬门槛 id（必须来自给定清单）；无法定位具体门槛时留空 → 判定层会转人工，不自动淘汰")
+    reason: str = Field(min_length=10, description="2~4 句，必须引用候选人的具体条目")
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------- ④ 匹配度
+class FitItem(Tolerant):
+    item: str = Field(min_length=1)
+    why: str = ""
+
+
+class LlmFitOutput(Tolerant):
+    matched: list[FitItem] = Field(default_factory=list)
+    partial: list[FitItem] = Field(default_factory=list)
+    unmatched: list[FitItem] = Field(default_factory=list)
+    fit_ratio: float = Field(ge=0.0, le=1.0)
+    direction: str = Field(min_length=5, description="候选人偏什么方向 vs 岗位要什么方向")
+    verdict: FitVerdict
+
+
+# ---------------------------------------------------------------- ⑤ 面试题
+class Question(Tolerant):
+    level: QLevel
+    difficulty: Difficulty
+    target: str = Field(min_length=2, description="考的是哪项能力或哪条岗位要求")
+    question: str = Field(min_length=5)
+    intent: str = ""
+    red_flag: str = Field(default="", description="什么样的回答说明是注水")
+
+
+class LlmQuestionsOutput(Tolerant):
+    questions: list[Question] = Field(default_factory=list)

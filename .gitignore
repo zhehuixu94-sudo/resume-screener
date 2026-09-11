@@ -1,0 +1,27 @@
+# ---- 环境与缓存 ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 运行产物：内含真实简历原文与个人信息，绝不入库 ----
+out/
+local/*
+!local/resumes.json.example
+*.log
+
+# ---- 密钥与本地配置 ----
+.env
+*.env
+secrets/
+!*.env.example
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

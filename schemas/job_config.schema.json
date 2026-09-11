@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/job_config.schema.json",
+  "title": "JobConfig",
+  "description": "HR 侧唯一配置入口：硬门槛 + 维度锚点 + 加分项关键词 + 达标线/三段带 + 锚点标定。",
+  "$defs": {
+    "BonusItem": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "points": {
+          "minimum": 0,
+          "title": "Points",
+          "type": "number"
+        },
+        "keywords": {
+          "description": "必须显式声明，靠名称模糊匹配会漏（实测）",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Keywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "points",
+        "keywords"
+      ],
+      "title": "BonusItem",
+      "type": "object"
+    },
+    "Calibration": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "default": "uncalibrated",
+          "enum": [
+            "uncalibrated",
+            "calibrated"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "anchors": {
+          "items": {
+            "$ref": "#/$defs/CalibrationAnchor"
+          },
+          "title": "Anchors",
+          "type": "array"
+        },
+        "good_group_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Good Group Min"
+        },
+        "calibrated_at": {
+          "default": "",
+          "title": "Calibrated At",
+          "type": "string"
+        }
+      },
+      "title": "Calibration",
+      "type": "object"
+    },
+    "CalibrationAnchor": {
+      "additionalProperties": false,
+      "description": "HR 给的锚点样本：合格 3~5 份 + 不合格 2~3 份 → 系统算分 → 达标线 = 合格组下限。",
+      "properties": {
+        "label": {
+          "enum": [
+            "合格",
+            "不合格"
+          ],
+          "title": "Label",
+          "type": "string"
+        },
+        "resume_ref": {
+          "description": "简历标识：文件名 / resume_id",
+          "minLength": 1,
+          "title": "Resume Ref",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "resume_ref"
+      ],
+      "title": "CalibrationAnchor",
+      "type": "object"
+    },
+    "Dimension": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "weight": {
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "title": "Weight",
+          "type": "number"
+        },
+        "anchors": {
+          "$ref": "#/$defs/DimensionAnchors"
+        },
+        "keywords": {
+          "description": "兜底归类用；空 = 不参与兜底",
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "weight",
+        "anchors"
+      ],
+      "title": "Dimension",
+      "type": "object"
+    },
+    "DimensionAnchors": {
+      "additionalProperties": false,
+      "description": "三档锚点 = 相对比较的标尺。每档写人话示例，别写抽象形容词。\n\n硬约束只有\"非空且三档不完全相同\"；\"这段锚点够不够当尺子\"交给 anchor_lint() 出警告——\n契约负责不让人写出非法配置，不负责替 HR 判定锚点写得好不好。",
+      "properties": {
+        "合格": {
+          "minLength": 2,
+          "title": "合格",
+          "type": "string"
+        },
+        "边缘": {
+          "minLength": 2,
+          "title": "边缘",
+          "type": "string"
+        },
+        "不达标": {
+          "minLength": 2,
+          "title": "不达标",
+          "type": "string"
+        }
+      },
+      "required": [
+        "合格",
+        "边缘",
+        "不达标"
+      ],
+      "title": "DimensionAnchors",
+      "type": "object"
+    },
+    "HardFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "rule": {
+          "description": "人话规则，如「本科及以上」，会原样进 prompt",
+          "minLength": 2,
+          "title": "Rule",
+          "type": "string"
+        },
+        "veto": {
+          "default": true,
+          "title": "Veto",
+          "type": "boolean"
+        },
+        "require_evidence": {
+          "default": true,
+          "description": "要求系统必须找到证据才判触发",
+          "title": "Require Evidence",
+          "type": "boolean"
+        },
+        "keywords": {
+          "description": "可选：辅助定位与该门槛相关的原文",
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "rule"
+      ],
+      "title": "HardFilter",
+      "type": "object"
+    },
+    "Scoring": {
+      "additionalProperties": false,
+      "properties": {
+        "pass_line": {
+          "description": "达标线",
+          "maximum": 200,
+          "minimum": 0,
+          "title": "Pass Line",
+          "type": "number"
+        },
+        "pass_line_source": {
+          "default": "manual_default",
+          "enum": [
+            "manual_default",
+            "anchor_calibrated"
+          ],
+          "title": "Pass Line Source",
+          "type": "string"
+        },
+        "band_width": {
+          "default": 5.0,
+          "description": "三段带：≥线+band 自动达标 / ±band 转人工 / <线−band 自动淘汰",
+          "minimum": 0,
+          "title": "Band Width",
+          "type": "number"
+        },
+        "dimension_aggregation": {
+          "default": "best",
+          "enum": [
+            "best",
+            "top2_mean"
+          ],
+          "title": "Dimension Aggregation",
+          "type": "string"
+        },
+        "fallback_keyword_mapping": {
+          "default": true,
+          "description": "模型没给维度时是否用维度 keywords 兜底归类",
+          "title": "Fallback Keyword Mapping",
+          "type": "boolean"
+        },
+        "confidence_floor": {
+          "default": 0.6,
+          "description": "低于此置信度不自动淘汰",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence Floor",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pass_line"
+      ],
+      "title": "Scoring",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "job_id": {
+      "minLength": 1,
+      "pattern": "^[a-z0-9_]+$",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "config_version": {
+      "default": "1",
+      "description": "配置改动递增；评分行记它才能复现历史分数",
+      "minLength": 1,
+      "title": "Config Version",
+      "type": "string"
+    },
+    "company_id": {
+      "default": "local",
+      "description": "多租户预留：不做 RLS，但每条数据都带它",
+      "title": "Company Id",
+      "type": "string"
+    },
+    "job_title": {
+      "minLength": 1,
+      "title": "Job Title",
+      "type": "string"
+    },
+    "jd": {
+      "minLength": 20,
+      "title": "Jd",
+      "type": "string"
+    },
+    "dimensions": {
+      "items": {
+        "$ref": "#/$defs/Dimension"
+      },
+      "minItems": 1,
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "hard_filters": {
+      "items": {
+        "$ref": "#/$defs/HardFilter"
+      },
+      "title": "Hard Filters",
+      "type": "array"
+    },
+    "bonus": {
+      "items": {
+        "$ref": "#/$defs/BonusItem"
+      },
+      "title": "Bonus",
+      "type": "array"
+    },
+    "scoring": {
+      "$ref": "#/$defs/Scoring"
+    },
+    "calibration": {
+      "$ref": "#/$defs/Calibration"
+    },
+    "interview_focus": {
+      "default": "",
+      "title": "Interview Focus",
+      "type": "string"
+    },
+    "notes": {
+      "default": "",
+      "title": "Notes",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "job_title",
+    "jd",
+    "dimensions",
+    "scoring"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.job_config.JobConfig"
+}

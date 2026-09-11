@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/llm/label_output.schema.json",
+  "title": "LlmLabelOutput",
+  "description": "喂给模型/校验模型输出用；改了模型就重新导出。",
+  "$defs": {
+    "LlmLabelItem": {
+      "properties": {
+        "idx": {
+          "description": "对应输入清单的编号，用于对齐，避免顺序错位",
+          "minimum": 1,
+          "title": "Idx",
+          "type": "integer"
+        },
+        "block": {
+          "default": "",
+          "title": "Block",
+          "type": "string"
+        },
+        "capability": {
+          "default": "",
+          "title": "Capability",
+          "type": "string"
+        },
+        "evidence": {
+          "default": "",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "relevance": {
+          "enum": [
+            "强",
+            "中",
+            "弱",
+            "无关"
+          ],
+          "title": "Relevance",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "高",
+            "中",
+            "低"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "必须命中岗位配置的维度 id；映射不到时为 null（该条目进 unmapped 单列，不硬塞进权重最高的维度）",
+          "title": "Dimension"
+        },
+        "reason": {
+          "minLength": 2,
+          "title": "Reason",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "idx",
+        "relevance",
+        "difficulty",
+        "reason",
+        "confidence"
+      ],
+      "title": "LlmLabelItem",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/$defs/LlmLabelItem"
+      },
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.llm_outputs.LlmLabelOutput"
+}

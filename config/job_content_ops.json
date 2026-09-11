@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "content_ops",
+  "config_version": "1",
+  "company_id": "local",
+  "job_title": "新媒体 / 电商运营（大专及以上）",
+  "jd": "岗位职责：负责小红书、抖音等平台账号矩阵运营；独立完成选题、文案、拍摄与剪辑的全流程内容生产；跟踪阅读、互动、转化数据并优化内容策略；负责私域导流与客资转化；带教兼职剪辑与协作方。\n任职要求：1) 大专及以上；2) 有内容策划与生产经验（文案/拍摄/剪辑至少两项熟练）；3) 会用数据指标（阅读量、互动率、转化率）复盘并优化；4) 了解平台算法规则与账号基础建设；5) 有团队管理或培训经验者优先。",
+  "dimensions": [
+    {
+      "id": "content_prod",
+      "name": "内容策划与生产",
+      "weight": 30,
+      "anchors": {
+        "合格": "独立完成文案+拍摄+剪辑全流程，能说清选题逻辑与爆款拆解方法",
+        "边缘": "参与过内容生产的一环（只会剪或只会写）",
+        "不达标": "无内容生产经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "data",
+      "name": "数据分析与优化",
+      "weight": 20,
+      "anchors": {
+        "合格": "能说清用哪些指标、怎么定位问题并调整内容",
+        "边缘": "会看后台数据但以记录为主",
+        "不达标": "无数据复盘经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "conversion",
+      "name": "私域与客资转化",
+      "weight": 20,
+      "anchors": {
+        "合格": "负责过导流到私域并产出有效客资，能给出量级与转化路径",
+        "边缘": "参与过导流环节但不是负责人",
+        "不达标": "无私域经验"
+      },
+      "keywords": []
+    },
+    {
+      "id": "team",
+      "name": "团队与培训",
+      "weight": 15,
+      "anchors": {
+        "合格": "带过团队/兼职，建立了标准或培训体系",
+        "边缘": "协助管理",
+        "不达标": "无管理经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "platform",
+      "name": "平台规则与工具",
+      "weight": 15,
+      "anchors": {
+        "合格": "熟悉多平台算法与工具，能说明差异化投放策略",
+        "边缘": "会基础发布与设置",
+        "不达标": "不熟悉"
+      },
+      "keywords": []
+    }
+  ],
+  "hard_filters": [
+    {
+      "id": "edu",
+      "name": "学历",
+      "rule": "大专及以上",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    },
+    {
+      "id": "content",
+      "name": "必备能力",
+      "rule": "具备内容生产（文案/拍摄/剪辑）或平台运营的实际经历",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    }
+  ],
+  "bonus": [
+    {
+      "name": "账号成果（爆款/涨粉/业绩）",
+      "points": 8,
+      "keywords": [
+        "爆款",
+        "获客",
+        "客资",
+        "业绩",
+        "涨粉",
+        "转发"
+      ]
+    },
+    {
+      "name": "团队管理/培训经历",
+      "points": 6,
+      "keywords": [
+        "团队",
+        "培训",
+        "带领",
+        "带教",
+        "赋能",
+        "统筹"
+      ]
+    }
+  ],
+  "scoring": {
+    "pass_line": 60,
+    "pass_line_source": "manual_default",
+    "band_width": 5,
+    "dimension_aggregation": "best",
+    "fallback_keyword_mapping": true,
+    "confidence_floor": 0.6
+  },
+  "calibration": {
+    "status": "uncalibrated",
+    "anchors": []
+  },
+  "interview_focus": "验证内容生产的真实产出与数据驱动能力（是否有可核查的账号成果）",
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容）"
+}

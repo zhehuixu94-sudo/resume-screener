@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/llm/questions_output.schema.json",
+  "title": "LlmQuestionsOutput",
+  "description": "喂给模型/校验模型输出用；改了模型就重新导出。",
+  "$defs": {
+    "Question": {
+      "properties": {
+        "level": {
+          "enum": [
+            "基础盘",
+            "深度",
+            "上限"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "高",
+            "中",
+            "低"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "target": {
+          "description": "考的是哪项能力或哪条岗位要求",
+          "minLength": 2,
+          "title": "Target",
+          "type": "string"
+        },
+        "question": {
+          "minLength": 5,
+          "title": "Question",
+          "type": "string"
+        },
+        "intent": {
+          "default": "",
+          "title": "Intent",
+          "type": "string"
+        },
+        "red_flag": {
+          "default": "",
+          "description": "什么样的回答说明是注水",
+          "title": "Red Flag",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "difficulty",
+        "target",
+        "question"
+      ],
+      "title": "Question",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/Question"
+      },
+      "title": "Questions",
+      "type": "array"
+    }
+  },
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.llm_outputs.LlmQuestionsOutput"
+}

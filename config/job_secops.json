@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "secops_junior",
+  "config_version": "1",
+  "company_id": "local",
+  "job_title": "安全服务工程师（初级 / 应届可）",
+  "jd": "岗位职责：面向客户提供安全服务，包括 Web 资产漏洞扫描与渗透测试、安全加固建议、安全运营支持（日志审计与告警分析）、编写测试报告与整改建议；协助完成等保测评前期准备工作。\n任职要求：1) 本科及以上，网络空间安全/计算机/软件/信息类相关专业；2) 熟悉 OWASP Top 10 常见 Web 漏洞（SQL 注入、XSS、弱口令等）的原理与验证方法；3) 掌握 Linux 常用命令与 Shell 脚本；4) 掌握 Python 或 Java 至少一门脚本/开发语言；5) 了解 TCP/IP、HTTP 协议与常用安全工具（nmap、Wireshark、Burp Suite）；6) 能编写规范的技术文档与测试报告；7) 应届生可，有 CTF 竞赛、护网、漏洞挖掘经历者优先。",
+  "dimensions": [
+    {
+      "id": "webvuln",
+      "name": "Web 漏洞理解与验证",
+      "weight": 30,
+      "anchors": {
+        "合格": "独立实现过漏洞检测逻辑（如自己写 SQL 注入/XSS 检测），能讲清 payload 构造、验证方法与误报处理",
+        "边缘": "用过现成扫描器（AWVS/Nessus/Burp）跑扫描、能读懂报告，但说不清漏洞原理与手工验证方法",
+        "不达标": "只在课程里听过 SQL 注入，没有写过任何验证脚本或复现过程"
+      },
+      "keywords": []
+    },
+    {
+      "id": "coding",
+      "name": "脚本 / 工具开发能力",
+      "weight": 25,
+      "anchors": {
+        "合格": "Python 独立完成有实际用途的工具（爬虫、扫描器、自动化脚本），涉及并发/多线程与可扩展结构",
+        "边缘": "写过课程作业级脚本（数据处理、简单爬虫），能跑通但没考虑过工程化或异常处理",
+        "不达标": "只写过 Hello World/作业题，未独立完成过可运行的工具"
+      },
+      "keywords": []
+    },
+    {
+      "id": "linux_net",
+      "name": "Linux 与网络基础",
+      "weight": 15,
+      "anchors": {
+        "合格": "能在 Linux 上部署服务、排查网络问题，会用 Wireshark/nmap 分析流量与端口",
+        "边缘": "会用 Linux 常用命令，网络知识停留在课堂理论，没有实际抓包分析经历",
+        "不达标": "基本没用过 Linux 命令行"
+      },
+      "keywords": []
+    },
+    {
+      "id": "secops",
+      "name": "安全运营 / 日志审计经验",
+      "weight": 15,
+      "anchors": {
+        "合格": "在企业环境做过日志分析、告警研判、策略执行支持，能说清发现过什么风险、怎么处理",
+        "边缘": "做过巡检类工作，接触过日志但只是整理与归档，没有研判过程",
+        "不达标": "完全没有安全运营相关经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "doc",
+      "name": "文档与报告能力",
+      "weight": 10,
+      "anchors": {
+        "合格": "写过规范的技术文档/测试报告（有结构、有结论、被采纳）",
+        "边缘": "写过文档但偏记录性质，缺少结论与建议",
+        "不达标": "没有文档产出证据"
+      },
+      "keywords": []
+    },
+    {
+      "id": "learning",
+      "name": "学习与竞赛信号",
+      "weight": 5,
+      "anchors": {
+        "合格": "有 CTF 获奖、护网经历或持续的安全技术产出（博客/开源/漏洞提交）",
+        "边缘": "参加过 CTF 但未获奖，或只有零散的课程证书",
+        "不达标": "没有任何可验证的安全技术活动"
+      },
+      "keywords": []
+    }
+  ],
+  "hard_filters": [
+    {
+      "id": "edu",
+      "name": "学历",
+      "rule": "本科及以上",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    },
+    {
+      "id": "core_skill",
+      "name": "必备能力",
+      "rule": "同时具备：(a) Python 或其他语言的脚本/工具开发能力；(b) 对 Web 漏洞原理的基本理解",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    }
+  ],
+  "bonus": [
+    {
+      "name": "CTF 市级及以上获奖",
+      "points": 8,
+      "keywords": [
+        "CTF",
+        "长城杯",
+        "竞赛",
+        "三等奖"
+      ]
+    },
+    {
+      "name": "安全工具/开源项目产出",
+      "points": 6,
+      "keywords": [
+        "开源",
+        "扫描器",
+        "自研",
+        "工具",
+        "模组"
+      ]
+    },
+    {
+      "name": "真实漏洞挖掘经历",
+      "points": 10,
+      "keywords": [
+        "漏洞挖掘",
+        "SRC",
+        "CVE",
+        "漏洞提交"
+      ]
+    },
+    {
+      "name": "安全相关实习",
+      "points": 5,
+      "keywords": [
+        "实习",
+        "安全员"
+      ]
+    }
+  ],
+  "scoring": {
+    "pass_line": 60,
+    "pass_line_source": "manual_default",
+    "band_width": 5,
+    "dimension_aggregation": "best",
+    "fallback_keyword_mapping": true,
+    "confidence_floor": 0.6
+  },
+  "calibration": {
+    "status": "uncalibrated",
+    "anchors": []
+  },
+  "interview_focus": "重点验证候选人对自己项目（漏洞扫描器）的真实理解深度，以及对 Web 漏洞原理的掌握程度",
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容）"
+}

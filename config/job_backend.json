@@ -1,0 +1,118 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "backend_go",
+  "config_version": "1",
+  "company_id": "local",
+  "job_title": "后端开发工程师（Go / Java，高并发方向）",
+  "jd": "岗位职责：负责核心业务系统的服务端设计与开发，参与高并发场景（订单、秒杀、支付）的架构设计与性能优化；保障线上服务稳定性。\n任职要求：1) 本科及以上，计算机相关专业；2) 熟练掌握 Go 或 Java，有服务端项目开发经验；3) 理解并发编程、分布式与微服务基本概念；4) 熟悉 MySQL/Redis 使用与调优；5) 有高并发、大流量系统实践经验者优先。",
+  "dimensions": [
+    {
+      "id": "concurrency",
+      "name": "高并发与分布式",
+      "weight": 30,
+      "anchors": {
+        "合格": "设计并压测过高并发系统（如秒杀/抢单），讲得清限流、缓存穿透、超卖防护方案",
+        "边缘": "做过接口开发，听过高并发方案但没在真实系统上落地",
+        "不达标": "没有任何并发/分布式相关实践"
+      },
+      "keywords": []
+    },
+    {
+      "id": "lang_depth",
+      "name": "语言与框架深度",
+      "weight": 25,
+      "anchors": {
+        "合格": "熟练 Go/Java，能讲清运行时机制（GMP/GC/JVM）与框架选型取舍",
+        "边缘": "会用框架做 CRUD，原理了解有限",
+        "不达标": "只有课程级语言基础"
+      },
+      "keywords": []
+    },
+    {
+      "id": "storage",
+      "name": "数据库与缓存",
+      "weight": 15,
+      "anchors": {
+        "合格": "做过索引优化、慢查询排查、缓存一致性设计",
+        "边缘": "会写 SQL、用过 Redis，没做过调优",
+        "不达标": "仅课程层面了解"
+      },
+      "keywords": []
+    },
+    {
+      "id": "engineering",
+      "name": "工程化与稳定性",
+      "weight": 15,
+      "anchors": {
+        "合格": "有 CI/CD、监控告警、线上问题排查经验",
+        "边缘": "用过 Git、会看日志",
+        "不达标": "无相关经验"
+      },
+      "keywords": []
+    },
+    {
+      "id": "collab",
+      "name": "协作与文档",
+      "weight": 15,
+      "anchors": {
+        "合格": "有跨团队协作与技术文档产出",
+        "边缘": "有团队作业经历",
+        "不达标": "无证据"
+      },
+      "keywords": []
+    }
+  ],
+  "hard_filters": [
+    {
+      "id": "edu",
+      "name": "学历",
+      "rule": "本科及以上",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    },
+    {
+      "id": "lang",
+      "name": "必备能力",
+      "rule": "熟练掌握 Go 或 Java，并有服务端项目开发经验",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    }
+  ],
+  "bonus": [
+    {
+      "name": "开源贡献",
+      "points": 8,
+      "keywords": [
+        "开源",
+        "GitHub",
+        "贡献"
+      ]
+    },
+    {
+      "name": "大流量线上系统经验",
+      "points": 10,
+      "keywords": [
+        "高并发",
+        "QPS",
+        "分布式",
+        "千万级"
+      ]
+    }
+  ],
+  "scoring": {
+    "pass_line": 60,
+    "pass_line_source": "manual_default",
+    "band_width": 5,
+    "dimension_aggregation": "best",
+    "fallback_keyword_mapping": true,
+    "confidence_floor": 0.6
+  },
+  "calibration": {
+    "status": "uncalibrated",
+    "anchors": []
+  },
+  "interview_focus": "验证候选人服务端开发与高并发经验的真实性",
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容）"
+}

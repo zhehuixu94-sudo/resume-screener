@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/llm/compare_output.schema.json",
+  "title": "LlmCompareOutput",
+  "description": "喂给模型/校验模型输出用；改了模型就重新导出。",
+  "properties": {
+    "verdict": {
+      "description": "整体判定：达标 / 边缘 / 不达标",
+      "enum": [
+        "达标",
+        "边缘",
+        "不达标"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "closest_anchor": {
+      "description": "最像哪一档锚点",
+      "enum": [
+        "合格",
+        "边缘",
+        "不达标"
+      ],
+      "title": "Closest Anchor",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "veto_triggered": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "触发硬门槛的人话说明；未触发必须为 null",
+      "title": "Veto Triggered"
+    },
+    "veto_filter_ids": {
+      "description": "被触发的硬门槛 id（必须来自给定清单）；无法定位具体门槛时留空 → 判定层会转人工，不自动淘汰",
+      "items": {
+        "type": "string"
+      },
+      "title": "Veto Filter Ids",
+      "type": "array"
+    },
+    "reason": {
+      "description": "2~4 句，必须引用候选人的具体条目",
+      "minLength": 10,
+      "title": "Reason",
+      "type": "string"
+    },
+    "strengths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Strengths",
+      "type": "array"
+    },
+    "gaps": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Gaps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "verdict",
+    "closest_anchor",
+    "confidence",
+    "reason"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.llm_outputs.LlmCompareOutput"
+}

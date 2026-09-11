@@ -1,0 +1,1126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/evaluation.schema.json",
+  "title": "Evaluation",
+  "description": "判定由规则层产出；自动处置不得建立在未锚定证据或降级输出之上（契约层强制）。",
+  "$defs": {
+    "BonusHit": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "points": {
+          "minimum": 0,
+          "title": "Points",
+          "type": "number"
+        },
+        "matched_keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Keywords",
+          "type": "array"
+        },
+        "applied": {
+          "default": true,
+          "title": "Applied",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "points"
+      ],
+      "title": "BonusHit",
+      "type": "object"
+    },
+    "CharRange": {
+      "additionalProperties": false,
+      "description": "字符区间 [start, end)，左闭右开。",
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "end": {
+          "minimum": 1,
+          "title": "End",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "CharRange",
+      "type": "object"
+    },
+    "CitedEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "span_id": {
+          "title": "Span Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "page": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "anchored": {
+          "default": false,
+          "title": "Anchored",
+          "type": "boolean"
+        },
+        "anchor_method": {
+          "default": "none",
+          "enum": [
+            "exact",
+            "ws_insensitive",
+            "fuzzy",
+            "none"
+          ],
+          "title": "Anchor Method",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span_id",
+        "text"
+      ],
+      "title": "CitedEvidence",
+      "type": "object"
+    },
+    "Conflict": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "llm_vs_rule",
+            "fit_vs_verdict",
+            "low_confidence",
+            "veto_triggered",
+            "degraded_validation",
+            "unanchored_evidence",
+            "edge_band"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "detail"
+      ],
+      "title": "Conflict",
+      "type": "object"
+    },
+    "DimensionItemScore": {
+      "additionalProperties": false,
+      "description": "进维度分的单条能力项：单项分 = 相关性系数 × 难度系数（解释标签，非模型直接打的分）。",
+      "properties": {
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "relevance": {
+          "enum": [
+            "强",
+            "中",
+            "弱",
+            "无关"
+          ],
+          "title": "Relevance",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "高",
+            "中",
+            "低"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "raw": {
+          "maximum": 3.0,
+          "minimum": 0.0,
+          "title": "Raw",
+          "type": "number"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        }
+      },
+      "required": [
+        "item_id",
+        "capability",
+        "relevance",
+        "difficulty",
+        "raw"
+      ],
+      "title": "DimensionItemScore",
+      "type": "object"
+    },
+    "DimensionScore": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "weight": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Weight",
+          "type": "number"
+        },
+        "aggregation": {
+          "enum": [
+            "best",
+            "top2_mean"
+          ],
+          "title": "Aggregation",
+          "type": "string"
+        },
+        "score": {
+          "description": "聚合后的原始分（0~3）",
+          "maximum": 3.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "rate": {
+          "description": "得分率 = score / 3",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Rate",
+          "type": "number"
+        },
+        "points": {
+          "minimum": 0.0,
+          "title": "Points",
+          "type": "number"
+        },
+        "best_item_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "产生该维度最高分的条目——报告必须引用它，不是第一条",
+          "title": "Best Item Id"
+        },
+        "best_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Best Span Id"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/DimensionItemScore"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "weight",
+        "aggregation",
+        "score",
+        "rate",
+        "points"
+      ],
+      "title": "DimensionScore",
+      "type": "object"
+    },
+    "EvalQuality": {
+      "additionalProperties": false,
+      "properties": {
+        "gate_passed": {
+          "title": "Gate Passed",
+          "type": "boolean"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "evidence_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Evidence Coverage",
+          "type": "number"
+        },
+        "unanchored_items": {
+          "minimum": 0,
+          "title": "Unanchored Items",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "gate_passed",
+        "evidence_coverage",
+        "unanchored_items"
+      ],
+      "title": "EvalQuality",
+      "type": "object"
+    },
+    "EvalStages": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "compare": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "fit": {
+          "$ref": "#/$defs/StageMeta"
+        },
+        "questions": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageMeta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "label",
+        "compare",
+        "fit"
+      ],
+      "title": "EvalStages",
+      "type": "object"
+    },
+    "FitItem": {
+      "properties": {
+        "item": {
+          "minLength": 1,
+          "title": "Item",
+          "type": "string"
+        },
+        "why": {
+          "default": "",
+          "title": "Why",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "title": "FitItem",
+      "type": "object"
+    },
+    "HardFilterResult": {
+      "additionalProperties": false,
+      "description": "硬门槛结果：pass / fail / unknown 三态。unknown（证据不足）不自动淘汰。",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "veto": {
+          "default": true,
+          "title": "Veto",
+          "type": "boolean"
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "unknown"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "rule",
+        "result"
+      ],
+      "title": "HardFilterResult",
+      "type": "object"
+    },
+    "LlmCompareOutput": {
+      "properties": {
+        "verdict": {
+          "description": "整体判定：达标 / 边缘 / 不达标",
+          "enum": [
+            "达标",
+            "边缘",
+            "不达标"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "closest_anchor": {
+          "description": "最像哪一档锚点",
+          "enum": [
+            "合格",
+            "边缘",
+            "不达标"
+          ],
+          "title": "Closest Anchor",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "veto_triggered": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "触发硬门槛的人话说明；未触发必须为 null",
+          "title": "Veto Triggered"
+        },
+        "veto_filter_ids": {
+          "description": "被触发的硬门槛 id（必须来自给定清单）；无法定位具体门槛时留空 → 判定层会转人工，不自动淘汰",
+          "items": {
+            "type": "string"
+          },
+          "title": "Veto Filter Ids",
+          "type": "array"
+        },
+        "reason": {
+          "description": "2~4 句，必须引用候选人的具体条目",
+          "minLength": 10,
+          "title": "Reason",
+          "type": "string"
+        },
+        "strengths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Strengths",
+          "type": "array"
+        },
+        "gaps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Gaps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "verdict",
+        "closest_anchor",
+        "confidence",
+        "reason"
+      ],
+      "title": "LlmCompareOutput",
+      "type": "object"
+    },
+    "LlmFitOutput": {
+      "properties": {
+        "matched": {
+          "items": {
+            "$ref": "#/$defs/FitItem"
+          },
+          "title": "Matched",
+          "type": "array"
+        },
+        "partial": {
+          "items": {
+            "$ref": "#/$defs/FitItem"
+          },
+          "title": "Partial",
+          "type": "array"
+        },
+        "unmatched": {
+          "items": {
+            "$ref": "#/$defs/FitItem"
+          },
+          "title": "Unmatched",
+          "type": "array"
+        },
+        "fit_ratio": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Fit Ratio",
+          "type": "number"
+        },
+        "direction": {
+          "description": "候选人偏什么方向 vs 岗位要什么方向",
+          "minLength": 5,
+          "title": "Direction",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "对口",
+            "部分对口",
+            "方向不符"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fit_ratio",
+        "direction",
+        "verdict"
+      ],
+      "title": "LlmFitOutput",
+      "type": "object"
+    },
+    "Question": {
+      "properties": {
+        "level": {
+          "enum": [
+            "基础盘",
+            "深度",
+            "上限"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "高",
+            "中",
+            "低"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "target": {
+          "description": "考的是哪项能力或哪条岗位要求",
+          "minLength": 2,
+          "title": "Target",
+          "type": "string"
+        },
+        "question": {
+          "minLength": 5,
+          "title": "Question",
+          "type": "string"
+        },
+        "intent": {
+          "default": "",
+          "title": "Intent",
+          "type": "string"
+        },
+        "red_flag": {
+          "default": "",
+          "description": "什么样的回答说明是注水",
+          "title": "Red Flag",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "difficulty",
+        "target",
+        "question"
+      ],
+      "title": "Question",
+      "type": "object"
+    },
+    "ScoringSnapshot": {
+      "additionalProperties": false,
+      "description": "这一行的分数是怎么算出来的（复现历史分数的全部参数）。",
+      "properties": {
+        "aggregation": {
+          "enum": [
+            "best",
+            "top2_mean"
+          ],
+          "title": "Aggregation",
+          "type": "string"
+        },
+        "pass_line": {
+          "title": "Pass Line",
+          "type": "number"
+        },
+        "pass_line_source": {
+          "enum": [
+            "manual_default",
+            "anchor_calibrated"
+          ],
+          "title": "Pass Line Source",
+          "type": "string"
+        },
+        "band_width": {
+          "title": "Band Width",
+          "type": "number"
+        },
+        "pass_threshold": {
+          "description": "pass_line + band_width：≥ 它且整体达标 → 自动达标",
+          "title": "Pass Threshold",
+          "type": "number"
+        },
+        "reject_threshold": {
+          "description": "pass_line - band_width：< 它且整体不达标 → 自动淘汰",
+          "title": "Reject Threshold",
+          "type": "number"
+        },
+        "confidence_floor": {
+          "title": "Confidence Floor",
+          "type": "number"
+        },
+        "config_version": {
+          "title": "Config Version",
+          "type": "string"
+        },
+        "gate_score_field": {
+          "const": "base_total",
+          "default": "base_total",
+          "title": "Gate Score Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "aggregation",
+        "pass_line",
+        "pass_line_source",
+        "band_width",
+        "pass_threshold",
+        "reject_threshold",
+        "confidence_floor",
+        "config_version"
+      ],
+      "title": "ScoringSnapshot",
+      "type": "object"
+    },
+    "StageMeta": {
+      "additionalProperties": false,
+      "description": "一段模型调用的可复现性元数据（分数可复现的根基）。",
+      "properties": {
+        "stage": {
+          "enum": [
+            "parse",
+            "label",
+            "compare",
+            "fit",
+            "questions"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "prompt_hash": {
+          "title": "Prompt Hash",
+          "type": "string"
+        },
+        "config_version": {
+          "default": "",
+          "title": "Config Version",
+          "type": "string"
+        },
+        "temperature": {
+          "default": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "trace_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trace Ids",
+          "type": "array"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "elapsed_s": {
+          "default": 0.0,
+          "title": "Elapsed S",
+          "type": "number"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationReport"
+        }
+      },
+      "required": [
+        "stage",
+        "model_id",
+        "prompt_version",
+        "prompt_hash"
+      ],
+      "title": "StageMeta",
+      "type": "object"
+    },
+    "UnmappedItem": {
+      "additionalProperties": false,
+      "description": "没归到任何维度的条目：留空并单列，不硬塞进权重最高的维度。",
+      "properties": {
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "relevance": {
+          "enum": [
+            "强",
+            "中",
+            "弱",
+            "无关"
+          ],
+          "title": "Relevance",
+          "type": "string"
+        },
+        "difficulty": {
+          "enum": [
+            "高",
+            "中",
+            "低"
+          ],
+          "title": "Difficulty",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "capability",
+        "relevance",
+        "difficulty"
+      ],
+      "title": "UnmappedItem",
+      "type": "object"
+    },
+    "Usage": {
+      "properties": {
+        "prompt_tokens": {
+          "default": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "default": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "default": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    },
+    "ValidationReport": {
+      "additionalProperties": false,
+      "description": "模型输出经过清洗/校验/重试/降级后的状态。落库用于评测与排查。",
+      "properties": {
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "repaired",
+            "degraded",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "attempts": {
+          "default": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "schema_ref": {
+          "default": "",
+          "title": "Schema Ref",
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "repairs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Repairs",
+          "type": "array"
+        },
+        "extra_keys_dropped": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Extra Keys Dropped",
+          "type": "array"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "title": "ValidationReport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "eval_id": {
+      "minLength": 1,
+      "title": "Eval Id",
+      "type": "string"
+    },
+    "resume_id": {
+      "minLength": 1,
+      "title": "Resume Id",
+      "type": "string"
+    },
+    "job_id": {
+      "minLength": 1,
+      "title": "Job Id",
+      "type": "string"
+    },
+    "job_config_version": {
+      "minLength": 1,
+      "title": "Job Config Version",
+      "type": "string"
+    },
+    "company_id": {
+      "default": "local",
+      "title": "Company Id",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "达标",
+        "边缘",
+        "不达标"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "decision": {
+      "description": "auto_pass / manual_review / auto_reject",
+      "enum": [
+        "auto_pass",
+        "manual_review",
+        "auto_reject"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "decision_reason": {
+      "description": "一句话说清为什么是这个处置",
+      "minLength": 2,
+      "title": "Decision Reason",
+      "type": "string"
+    },
+    "reasons": {
+      "description": "理由明细：LLM 判定理由 + 规则层判据",
+      "items": {
+        "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "confidence": {
+      "description": "采用 LLM 整体判定的置信度；校验降级时为 0.0（强制转人工）",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "hard_filters": {
+      "items": {
+        "$ref": "#/$defs/HardFilterResult"
+      },
+      "title": "Hard Filters",
+      "type": "array"
+    },
+    "dimensions": {
+      "items": {
+        "$ref": "#/$defs/DimensionScore"
+      },
+      "minItems": 1,
+      "title": "Dimensions",
+      "type": "array"
+    },
+    "base_total": {
+      "description": "规则层总分（不含加分项）；与达标线比较的就是它",
+      "minimum": 0.0,
+      "title": "Base Total",
+      "type": "number"
+    },
+    "bonus_hits": {
+      "items": {
+        "$ref": "#/$defs/BonusHit"
+      },
+      "title": "Bonus Hits",
+      "type": "array"
+    },
+    "bonus_points": {
+      "default": 0.0,
+      "minimum": 0.0,
+      "title": "Bonus Points",
+      "type": "number"
+    },
+    "total_with_bonus": {
+      "default": 0.0,
+      "description": "仅供展示，不参与判定",
+      "minimum": 0.0,
+      "title": "Total With Bonus",
+      "type": "number"
+    },
+    "unmapped_items": {
+      "items": {
+        "$ref": "#/$defs/UnmappedItem"
+      },
+      "title": "Unmapped Items",
+      "type": "array"
+    },
+    "fit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LlmFitOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "匹配度：技能画像 vs 岗位方向"
+    },
+    "cited_evidence": {
+      "items": {
+        "$ref": "#/$defs/CitedEvidence"
+      },
+      "title": "Cited Evidence",
+      "type": "array"
+    },
+    "llm_compare": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LlmCompareOutput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "questions": {
+      "items": {
+        "$ref": "#/$defs/Question"
+      },
+      "title": "Questions",
+      "type": "array"
+    },
+    "questions_skipped_reason": {
+      "default": "",
+      "title": "Questions Skipped Reason",
+      "type": "string"
+    },
+    "conflicts": {
+      "items": {
+        "$ref": "#/$defs/Conflict"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "prompt_version": {
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "temperature": {
+      "default": 0.0,
+      "title": "Temperature",
+      "type": "number"
+    },
+    "stages": {
+      "$ref": "#/$defs/EvalStages"
+    },
+    "scoring_snapshot": {
+      "$ref": "#/$defs/ScoringSnapshot"
+    },
+    "quality": {
+      "$ref": "#/$defs/EvalQuality"
+    },
+    "disclaimer": {
+      "default": "本报告由 LLM 自动生成，仅供参考，不参与录用决策；结论须由 HR 复核。",
+      "title": "Disclaimer",
+      "type": "string"
+    }
+  },
+  "required": [
+    "eval_id",
+    "resume_id",
+    "job_id",
+    "job_config_version",
+    "verdict",
+    "decision",
+    "decision_reason",
+    "confidence",
+    "dimensions",
+    "base_total",
+    "model_id",
+    "prompt_version",
+    "stages",
+    "scoring_snapshot",
+    "quality"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.evaluation.Evaluation"
+}

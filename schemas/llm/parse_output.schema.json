@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/llm/parse_output.schema.json",
+  "title": "LlmParseOutput",
+  "description": "喂给模型/校验模型输出用；改了模型就重新导出。",
+  "$defs": {
+    "LlmParseBlock": {
+      "properties": {
+        "section": {
+          "description": "段落类型：教育背景/项目经历/实习经历/技能/…",
+          "minLength": 1,
+          "title": "Section",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "period": {
+          "default": "",
+          "title": "Period",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/LlmParseItem"
+          },
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "section",
+        "title",
+        "items"
+      ],
+      "title": "LlmParseBlock",
+      "type": "object"
+    },
+    "LlmParseItem": {
+      "properties": {
+        "capability": {
+          "description": "能力项名称",
+          "minLength": 2,
+          "title": "Capability",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "简历原文连续片段，≤60 字，不得改写/拼接",
+          "maxLength": 80,
+          "minLength": 4,
+          "title": "Evidence",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "evidence"
+      ],
+      "title": "LlmParseItem",
+      "type": "object"
+    },
+    "LlmParseQuality": {
+      "properties": {
+        "sections_found": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Sections Found",
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sections_found"
+      ],
+      "title": "LlmParseQuality",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/LlmParseBlock"
+      },
+      "minItems": 1,
+      "title": "Blocks",
+      "type": "array"
+    },
+    "parse_quality": {
+      "$ref": "#/$defs/LlmParseQuality"
+    }
+  },
+  "required": [
+    "blocks",
+    "parse_quality"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.llm_outputs.LlmParseOutput"
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/llm/fit_output.schema.json",
+  "title": "LlmFitOutput",
+  "description": "喂给模型/校验模型输出用；改了模型就重新导出。",
+  "$defs": {
+    "FitItem": {
+      "properties": {
+        "item": {
+          "minLength": 1,
+          "title": "Item",
+          "type": "string"
+        },
+        "why": {
+          "default": "",
+          "title": "Why",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "title": "FitItem",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "matched": {
+      "items": {
+        "$ref": "#/$defs/FitItem"
+      },
+      "title": "Matched",
+      "type": "array"
+    },
+    "partial": {
+      "items": {
+        "$ref": "#/$defs/FitItem"
+      },
+      "title": "Partial",
+      "type": "array"
+    },
+    "unmatched": {
+      "items": {
+        "$ref": "#/$defs/FitItem"
+      },
+      "title": "Unmatched",
+      "type": "array"
+    },
+    "fit_ratio": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Fit Ratio",
+      "type": "number"
+    },
+    "direction": {
+      "description": "候选人偏什么方向 vs 岗位要什么方向",
+      "minLength": 5,
+      "title": "Direction",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "对口",
+        "部分对口",
+        "方向不符"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fit_ratio",
+    "direction",
+    "verdict"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.llm_outputs.LlmFitOutput"
+}

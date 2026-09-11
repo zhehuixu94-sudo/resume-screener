@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0.0",
+  "job_id": "hr_admin",
+  "config_version": "1",
+  "company_id": "local",
+  "job_title": "行政 / 人事助理（应届）",
+  "jd": "岗位职责：负责日常行政事务（办公用品、会议安排、来访接待）、员工入离职手续与档案管理、考勤统计与社保公积金资料整理、协助组织公司活动与招聘流程支持。\n任职要求：1) 本科及以上；2) 熟练使用 Office/WPS 办公软件，能规范整理表格与档案；3) 沟通表达能力好，做事细致有耐心；4) 有学生组织、活动组织或行政实习经历者优先。",
+  "dimensions": [
+    {
+      "id": "admin",
+      "name": "行政事务处理",
+      "weight": 30,
+      "anchors": {
+        "合格": "独立负责过会议安排、办公用品管理、来访接待等日常事务，流程清楚",
+        "边缘": "做过零散的行政辅助工作，需要人带",
+        "不达标": "无行政事务经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "hr_ops",
+      "name": "人事 / 档案 / 考勤",
+      "weight": 25,
+      "anchors": {
+        "合格": "处理过入离职手续、考勤统计或档案管理，了解社保公积金基本流程",
+        "边缘": "接触过考勤或档案整理，不负责判断",
+        "不达标": "无相关经历"
+      },
+      "keywords": []
+    },
+    {
+      "id": "comm",
+      "name": "沟通与协调",
+      "weight": 20,
+      "anchors": {
+        "合格": "有对接多方、组织会议或活动的经历，能说清如何协调冲突",
+        "边缘": "有团队协作经历但非主导",
+        "不达标": "无证据"
+      },
+      "keywords": []
+    },
+    {
+      "id": "office2",
+      "name": "办公软件与文档",
+      "weight": 15,
+      "anchors": {
+        "合格": "熟练 Excel（函数/透视）+ Word 排版，做过规范的表格与档案",
+        "边缘": "会用基础功能",
+        "不达标": "不熟悉"
+      },
+      "keywords": []
+    },
+    {
+      "id": "attitude",
+      "name": "细致与责任心",
+      "weight": 10,
+      "anchors": {
+        "合格": "有需要长期细致核对的工作经历且零差错",
+        "边缘": "一般",
+        "不达标": "无证据"
+      },
+      "keywords": []
+    }
+  ],
+  "hard_filters": [
+    {
+      "id": "edu",
+      "name": "学历",
+      "rule": "本科及以上",
+      "veto": true,
+      "require_evidence": true,
+      "keywords": []
+    }
+  ],
+  "bonus": [
+    {
+      "name": "学生干部/活动组织经历",
+      "points": 8,
+      "keywords": [
+        "学生会",
+        "体育部",
+        "干部",
+        "策划",
+        "组织",
+        "志愿",
+        "三下乡"
+      ]
+    },
+    {
+      "name": "行政/人事相关实习",
+      "points": 6,
+      "keywords": [
+        "行政",
+        "人事",
+        "前台",
+        "助理"
+      ]
+    }
+  ],
+  "scoring": {
+    "pass_line": 60,
+    "pass_line_source": "manual_default",
+    "band_width": 5,
+    "dimension_aggregation": "best",
+    "fallback_keyword_mapping": true,
+    "confidence_floor": 0.6
+  },
+  "calibration": {
+    "status": "uncalibrated",
+    "anchors": []
+  },
+  "interview_focus": "验证行政事务的真实参与度与细致程度",
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容）"
+}

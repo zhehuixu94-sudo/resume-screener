@@ -1,0 +1,781 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-screener/schemas/resume_parse.schema.json",
+  "title": "ResumeParse",
+  "description": "偏移由代码锚定，模型只给原文片段；未锚定的证据不可高亮、不可作自动淘汰依据。",
+  "$defs": {
+    "Anchoring": {
+      "additionalProperties": false,
+      "description": "原文片段是怎么落到偏移上的。method=none 表示锚定失败（证据不可高亮、不可作自动淘汰依据）。",
+      "properties": {
+        "method": {
+          "enum": [
+            "exact",
+            "ws_insensitive",
+            "fuzzy",
+            "none"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "similarity": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Similarity",
+          "type": "number"
+        },
+        "matched_text": {
+          "default": "",
+          "title": "Matched Text",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "title": "Anchoring",
+      "type": "object"
+    },
+    "Block": {
+      "additionalProperties": false,
+      "properties": {
+        "block_id": {
+          "minLength": 1,
+          "title": "Block Id",
+          "type": "string"
+        },
+        "section": {
+          "minLength": 1,
+          "title": "Section",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "period": {
+          "default": "",
+          "title": "Period",
+          "type": "string"
+        },
+        "item_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Item Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "block_id",
+        "section",
+        "title"
+      ],
+      "title": "Block",
+      "type": "object"
+    },
+    "CharRange": {
+      "additionalProperties": false,
+      "description": "字符区间 [start, end)，左闭右开。",
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "end": {
+          "minimum": 1,
+          "title": "End",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "CharRange",
+      "type": "object"
+    },
+    "EvidenceSpan": {
+      "additionalProperties": false,
+      "description": "一条可追溯的证据：模型给的原文片段 + 代码锚定出的偏移。\n\nspan/raw_range 的坐标都由代码计算，模型不得自报偏移。",
+      "properties": {
+        "span_id": {
+          "title": "Span Id",
+          "type": "string"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "raw_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CharRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "page": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "block_title": {
+          "default": "",
+          "title": "Block Title",
+          "type": "string"
+        },
+        "anchoring": {
+          "$ref": "#/$defs/Anchoring"
+        },
+        "alt_spans": {
+          "items": {
+            "$ref": "#/$defs/CharRange"
+          },
+          "title": "Alt Spans",
+          "type": "array"
+        }
+      },
+      "required": [
+        "span_id",
+        "item_id",
+        "text",
+        "anchoring"
+      ],
+      "title": "EvidenceSpan",
+      "type": "object"
+    },
+    "FieldAnomaly": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "severity": {
+          "default": "warn",
+          "enum": [
+            "warn",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        }
+      },
+      "required": [
+        "field",
+        "detail"
+      ],
+      "title": "FieldAnomaly",
+      "type": "object"
+    },
+    "Normalization": {
+      "additionalProperties": false,
+      "description": "抽取原文 → 规范化文本 的映射元数据（偏移都指规范化文本，raw_range 指回原文）。",
+      "properties": {
+        "version": {
+          "default": "n1",
+          "title": "Version",
+          "type": "string"
+        },
+        "ops": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ops",
+          "type": "array"
+        },
+        "raw_char_count": {
+          "minimum": 0,
+          "title": "Raw Char Count",
+          "type": "integer"
+        },
+        "norm_char_count": {
+          "minimum": 0,
+          "title": "Norm Char Count",
+          "type": "integer"
+        },
+        "raw_sha256": {
+          "default": "",
+          "title": "Raw Sha256",
+          "type": "string"
+        },
+        "norm_sha256": {
+          "default": "",
+          "title": "Norm Sha256",
+          "type": "string"
+        },
+        "map_sha256": {
+          "default": "",
+          "title": "Map Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "raw_char_count",
+        "norm_char_count"
+      ],
+      "title": "Normalization",
+      "type": "object"
+    },
+    "ParseStats": {
+      "additionalProperties": false,
+      "properties": {
+        "blocks": {
+          "minimum": 0,
+          "title": "Blocks",
+          "type": "integer"
+        },
+        "items": {
+          "minimum": 0,
+          "title": "Items",
+          "type": "integer"
+        },
+        "evidence_total": {
+          "minimum": 0,
+          "title": "Evidence Total",
+          "type": "integer"
+        },
+        "evidence_anchored": {
+          "minimum": 0,
+          "title": "Evidence Anchored",
+          "type": "integer"
+        },
+        "evidence_unanchored": {
+          "minimum": 0,
+          "title": "Evidence Unanchored",
+          "type": "integer"
+        },
+        "evidence_coverage": {
+          "description": "anchored / items，即报告里『证据可点开』的达标率",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Evidence Coverage",
+          "type": "number"
+        }
+      },
+      "required": [
+        "blocks",
+        "items",
+        "evidence_total",
+        "evidence_anchored",
+        "evidence_unanchored",
+        "evidence_coverage"
+      ],
+      "title": "ParseStats",
+      "type": "object"
+    },
+    "ParsedItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "minLength": 1,
+          "title": "Item Id",
+          "type": "string"
+        },
+        "block_id": {
+          "minLength": 1,
+          "title": "Block Id",
+          "type": "string"
+        },
+        "capability": {
+          "minLength": 2,
+          "title": "Capability",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "指向 evidence[] 中的证据；None = 锚定失败，报告里单列",
+          "title": "Span Id"
+        },
+        "anchored": {
+          "default": false,
+          "title": "Anchored",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "item_id",
+        "block_id",
+        "capability"
+      ],
+      "title": "ParsedItem",
+      "type": "object"
+    },
+    "Quality": {
+      "additionalProperties": false,
+      "description": "解析质量：机器门禁 + 模型自报 + 字段/时间线级校验（后两者 v1 先占位）。",
+      "properties": {
+        "gate_passed": {
+          "title": "Gate Passed",
+          "type": "boolean"
+        },
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/QualityCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Issues",
+          "type": "array"
+        },
+        "model_sections_found": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Model Sections Found",
+          "type": "array"
+        },
+        "model_issues": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Model Issues",
+          "type": "array"
+        },
+        "field_anomalies": {
+          "items": {
+            "$ref": "#/$defs/FieldAnomaly"
+          },
+          "title": "Field Anomalies",
+          "type": "array"
+        },
+        "timeline": {
+          "$ref": "#/$defs/TimelineCheck"
+        }
+      },
+      "required": [
+        "gate_passed"
+      ],
+      "title": "Quality",
+      "type": "object"
+    },
+    "QualityCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "hint": {
+          "default": "",
+          "title": "Hint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "ok"
+      ],
+      "title": "QualityCheck",
+      "type": "object"
+    },
+    "SourceInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "title": "File Name",
+          "type": "string"
+        },
+        "file_sha256": {
+          "title": "File Sha256",
+          "type": "string"
+        },
+        "file_format": {
+          "enum": [
+            "pdf",
+            "docx",
+            "doc",
+            "txt"
+          ],
+          "title": "File Format",
+          "type": "string"
+        },
+        "extractor": {
+          "title": "Extractor",
+          "type": "string"
+        },
+        "pages": {
+          "minimum": 1,
+          "title": "Pages",
+          "type": "integer"
+        },
+        "page_offsets": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Page Offsets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "file_name",
+        "file_sha256",
+        "file_format",
+        "extractor",
+        "pages"
+      ],
+      "title": "SourceInfo",
+      "type": "object"
+    },
+    "StageMeta": {
+      "additionalProperties": false,
+      "description": "一段模型调用的可复现性元数据（分数可复现的根基）。",
+      "properties": {
+        "stage": {
+          "enum": [
+            "parse",
+            "label",
+            "compare",
+            "fit",
+            "questions"
+          ],
+          "title": "Stage",
+          "type": "string"
+        },
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "prompt_hash": {
+          "title": "Prompt Hash",
+          "type": "string"
+        },
+        "config_version": {
+          "default": "",
+          "title": "Config Version",
+          "type": "string"
+        },
+        "temperature": {
+          "default": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "trace_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Trace Ids",
+          "type": "array"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "elapsed_s": {
+          "default": 0.0,
+          "title": "Elapsed S",
+          "type": "number"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationReport"
+        }
+      },
+      "required": [
+        "stage",
+        "model_id",
+        "prompt_version",
+        "prompt_hash"
+      ],
+      "title": "StageMeta",
+      "type": "object"
+    },
+    "TimelineCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "default": "not_checked",
+          "enum": [
+            "not_checked",
+            "ok",
+            "issues"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/TimelineIssue"
+          },
+          "title": "Issues",
+          "type": "array"
+        }
+      },
+      "title": "TimelineCheck",
+      "type": "object"
+    },
+    "TimelineIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "reversed_range",
+            "overlap",
+            "gap",
+            "unparsable",
+            "future_date"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "title": "TimelineIssue",
+      "type": "object"
+    },
+    "Usage": {
+      "properties": {
+        "prompt_tokens": {
+          "default": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "default": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "default": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    },
+    "ValidationReport": {
+      "additionalProperties": false,
+      "description": "模型输出经过清洗/校验/重试/降级后的状态。落库用于评测与排查。",
+      "properties": {
+        "status": {
+          "default": "ok",
+          "enum": [
+            "ok",
+            "repaired",
+            "degraded",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "attempts": {
+          "default": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "schema_ref": {
+          "default": "",
+          "title": "Schema Ref",
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "repairs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Repairs",
+          "type": "array"
+        },
+        "extra_keys_dropped": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Extra Keys Dropped",
+          "type": "array"
+        },
+        "notes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notes",
+          "type": "array"
+        }
+      },
+      "title": "ValidationReport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "resume_id": {
+      "description": "默认 = 文件 sha256 前 16 位（同一份简历重复上传视为同一实体）",
+      "minLength": 1,
+      "title": "Resume Id",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceInfo"
+    },
+    "normalization": {
+      "$ref": "#/$defs/Normalization"
+    },
+    "quality": {
+      "$ref": "#/$defs/Quality"
+    },
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/Block"
+      },
+      "minItems": 1,
+      "title": "Blocks",
+      "type": "array"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/ParsedItem"
+      },
+      "minItems": 1,
+      "title": "Items",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceSpan"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "stats": {
+      "$ref": "#/$defs/ParseStats"
+    },
+    "text": {
+      "description": "规范化后的简历文本（报告/高亮用；原文另存加密列）",
+      "title": "Text",
+      "type": "string"
+    },
+    "llm": {
+      "$ref": "#/$defs/StageMeta"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "resume_id",
+    "source",
+    "normalization",
+    "quality",
+    "blocks",
+    "items",
+    "stats",
+    "text",
+    "llm"
+  ],
+  "type": "object",
+  "x-contract-version": "1.0.0",
+  "x-model": "app.contracts.resume_parse.ResumeParse"
+}
