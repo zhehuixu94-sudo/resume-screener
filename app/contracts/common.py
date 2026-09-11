@@ -59,6 +59,10 @@ class ValidationReport(BaseModel):
     repairs: list[str] = Field(default_factory=list)     # 自动修正记录（枚举同义、百分数、垃圾值…）
     extra_keys_dropped: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    raw_excerpt: str = Field(default="", max_length=600,
+                             description="失败/降级时留一段模型原始输出（截断到 600 字）。"
+                                         "没有它就只能看到『Expecting , delimiter』这种报错，"
+                                         "无法判断是输出被截断、还是模型拼了非法 JSON —— 实测踩过")
 
     @property
     def usable(self) -> bool:

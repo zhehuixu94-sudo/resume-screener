@@ -87,9 +87,12 @@ def main() -> int:
             moved.append((f, A[f], B[f], score_d))
     print(f"发生变化的：{len(moved)}/{len(common)} 份（判定或处置或分数变了）")
     print(f"\n{'简历':<20} {'v1 分':>6} {'v2 分':>6} {'Δ分':>6}  判定 v1→v2           处置 v1→v2")
+    def mv(r: dict) -> str:
+        return r["model_verdict"] or "降级"
+
     for f, x, y, d in sorted(moved, key=lambda t: -abs(t[3]))[:a.top]:
         print(f"{f:<20} {float(x['base_total']):>6.1f} {float(y['base_total']):>6.1f} {d:>+6.1f}  "
-              f"{x['model_verdict']:>4}→{y['model_verdict']:<4}          {x['decision']:>12}→{y['decision']:<12}")
+              f"{mv(x):>4}→{mv(y):<4}          {x['decision']:>12}→{y['decision']:<12}")
     print(f"\n结论提示：分数普遍下移/上移说明规则分口径变了；处置变化集中在哪一类，就去看那类的冲突类型差异。")
     return 0
 

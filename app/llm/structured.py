@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -119,12 +120,20 @@ def call_structured(client: SiliconFlowClient, *, stage: str, system: str, user:
             data = parse_json(res.text)
         except ValueError as e:
             report.errors = [str(e)[:200]]
-            attempt_user = _feedback(user, ["输出不是合法 JSON（可能带了代码围栏或额外文字）"])
-            continue
+            report.raw_excerpt = _excerpt(res.text)
+            recovered = repair_truncated_json(res.text)
+            if recovered is not None:
+                data = recovered
+                report.repairs.append(f"输出被截断（原 {len(res.text)} 字）→ 补齐结尾后解析成功")
+                fenced = False
+            else:
+                attempt_user = _feedback(user, ["输出不是合法 JSON（可能带了代码围栏或额外文字）"])
+                continue
         if fenced:
             report.repairs.append("输出带代码围栏（```json）→ 已剥离后解析")
         if not isinstance(data, dict):
             report.errors = [f"顶层不是对象，而是 {type(data).__name__}"]
+            report.raw_excerpt = _excerpt(res.text)
             attempt_user = _feedback(user, ["顶层必须是 JSON 对象"])
             continue
 
@@ -149,6 +158,7 @@ def call_structured(client: SiliconFlowClient, *, stage: str, system: str, user:
         except ValidationError as e:
             errs = _summarize_errors(e)
             report.errors = errs
+            report.raw_excerpt = _excerpt(res.text)
             if attempt <= max_repair:
                 attempt_user = _feedback(user, errs)
                 continue
@@ -190,6 +200,59 @@ def _meta(stage: str, model_id: str, prompt_version: str, prompt_hash: str, conf
     return StageMeta(stage=stage, model_id=model_id, prompt_version=prompt_version, prompt_hash=prompt_hash,
                      config_version=config_version, temperature=temperature, trace_ids=trace_ids,
                      usage=usage, elapsed_s=round(elapsed, 2), validation=report)
+
+
+def repair_truncated_json(text: str) -> dict | None:
+    """尝试修复"被截断的 JSON 对象"：补齐未闭合的字符串与括号。
+
+    实测背景：100 份跑批里 5 份的 compare 阶段输出被切在字符串中间
+    （reason 写到中文引号“处戛然而止），JSON 不闭合 → 整段降级、置信度 0、强制转人工。
+    这类截断的**关键字段在被截点之前通常已经完整**（verdict/confidence/veto 都在前面），
+    丢掉整段不划算；但修复必须留痕（记进 validation.repairs），不做静默修补。
+    """
+    t = (text or "").strip()
+    if not t.startswith("{"):
+        return None
+    for suffix in ('"', "}", '"}', '"]}', '"]}}', "}}"):
+        try:
+            d = json.loads(t + suffix)
+            if isinstance(d, dict):
+                return d
+        except ValueError:            # JSONDecodeError ⊂ ValueError；别写 except Exception，
+            pass                      # 否则 NameError/AttributeError 这类编程错误会被静默吞掉（踩过）
+    # 通用兜底：按引号/括号配对情况补齐结尾
+    in_str = esc = False
+    opens: list[str] = []
+    for ch in t:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            opens.append(ch)
+        elif ch in "}]" and opens:
+            opens.pop()
+    tail = ('"' if in_str else "") + "".join("}" if o == "{" else "]" for o in reversed(opens))
+    if not tail:
+        return None
+    try:
+        d = json.loads(t + tail)
+        return d if isinstance(d, dict) else None
+    except ValueError:
+        return None
+
+
+def _excerpt(text: str, limit: int = 560) -> str:
+    """留一段模型原始输出：判断"是被截断"还是"拼了非法 JSON"全靠它。"""
+    t = (text or "").strip()
+    return (t[:limit] + ("…（输出被截断？）" if len(t) > limit else ""))[:600]
 
 
 def _feedback(user: str, errors: list[str]) -> str:

@@ -8,6 +8,7 @@
   };
   const CONFLICT_CN = {
     veto_triggered: '触发硬门槛', veto_override: '门槛豁免（综合达标）',
+    edge_band_low_reject: '边缘低分（按策略自动淘汰）',
     llm_vs_rule: '两路判据不一致', fit_vs_verdict: '匹配度冲突', low_confidence: '置信度偏低',
     degraded_validation: '模型输出降级', unanchored_evidence: '证据未锚定', edge_band: '落在线内',
   };

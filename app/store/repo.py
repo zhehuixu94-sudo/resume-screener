@@ -179,6 +179,33 @@ class Repository:
                     "give_up": attempts >= max_attempts})
         return state
 
+    def requeue_degraded(self, cfg: JobConfig) -> int:
+        """把"评估里有关键阶段降级/失败"的行重新入队。
+
+        为什么需要它：跑批时模型偶尔返回截断/非法 JSON（实测 100 份里 5 份的 compare 失败），
+        这类行仍会以"降级"状态完成（置信度 0、强制转人工），不会被 reset_stuck 当成失败态回收；
+        要修得靠重跑，但重跑前得先能把它挑出来。
+        """
+        row = db.execute(
+            """WITH upd AS (
+                   UPDATE application a
+                      SET state = 'pending_parse', attempts = 0, last_error = '', worker = '', locked_at = NULL,
+                          updated_at = now()
+                    WHERE a.company_id = %s AND a.job_id = %s AND a.config_version = %s
+                      AND EXISTS (
+                          SELECT 1 FROM evaluation e
+                           WHERE e.application_id = a.application_id
+                             AND EXISTS (
+                                 SELECT 1 FROM jsonb_each(e.payload -> 'stages') AS kv
+                                  WHERE kv.value IS NOT NULL
+                                    AND kv.value -> 'validation' ->> 'status' IN ('degraded', 'failed')))
+                RETURNING 1)
+               SELECT count(*) AS n FROM upd""",
+            (self.company_id, cfg.job_id, cfg.config_version), returning=True)
+        n = int(row["n"]) if row else 0
+        self.audit("requeue_degraded", "job", f"{cfg.job_id}@{cfg.config_version}", {"n": n})
+        return n
+
     def reset_stuck(self, cfg: JobConfig, *, states: Sequence[str] = ("parsing", "evaluating"),
                     include_failed: bool = False, lock_timeout_min: int = LOCK_TIMEOUT_MIN) -> int:
         """把卡住/失败的行恢复成可重跑（清 attempts 与锁）——运维入口，供 kill 后或人工重试用。

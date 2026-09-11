@@ -108,9 +108,14 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
             return out
         parse = ResumeParse.model_validate(row_payload["payload"])
 
-    # 2) 评估（已评估且非 force → 跳过）
-    existing = db.fetch_one("SELECT evaluation_id FROM evaluation WHERE application_id = %s", (app_id,))
-    if existing and not force:
+    # 2) 评估（已评估且非 force → 跳过；但**存的是降级结果时不算"已完成"**，要重算）
+    existing = db.fetch_one(
+        """SELECT evaluation_id,
+                  EXISTS (SELECT 1 FROM jsonb_each(payload -> 'stages') AS kv
+                           WHERE kv.value IS NOT NULL
+                             AND kv.value -> 'validation' ->> 'status' IN ('degraded', 'failed')) AS degraded
+             FROM evaluation WHERE application_id = %s""", (app_id,))
+    if existing and not force and not existing["degraded"]:
         repo.set_state(app_id, "evaluated")
         out.update(state="evaluated", action="已评估（跳过）")
         return out
@@ -174,7 +179,8 @@ def reports(job: JobConfig, repo: Repository, outdir: str) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="简历初筛批处理（M0 闭环）")
-    ap.add_argument("cmd", choices=["enqueue", "run", "report", "all", "status", "retry"])
+    ap.add_argument("cmd", choices=["enqueue", "run", "report", "all", "status", "retry",
+                                    "requeue-degraded"])
     ap.add_argument("--job", default="config/job_secops.json")
     ap.add_argument("--resumes", nargs="*", default=None, help="简历文件/目录（目录会递归收集 pdf/docx/txt）")
     ap.add_argument("--workers", type=int, default=2, help="并发 worker 数（LLM 侧注意限流）")
@@ -231,6 +237,11 @@ def main() -> int:
         print(f"报告 {len(written)} 个 → {a.outdir}")
         for w in written[:5]:
             print("  -", w)
+
+    if a.cmd == "requeue-degraded":
+        n = repo.requeue_degraded(job)
+        print(f"已把 {n} 行『有关键阶段降级/失败』的重新入队 → 状态机分布：{repo.progress(job)}")
+        return 0
 
     if a.cmd == "retry":
         # 只回收锁已过期的行：正在跑的行不动（用 --lock-timeout 控制"多久算过期"）

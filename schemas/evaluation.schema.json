@@ -136,7 +136,8 @@
             "veto_override",
             "degraded_validation",
             "unanchored_evidence",
-            "edge_band"
+            "edge_band",
+            "edge_band_low_reject"
           ],
           "title": "Type",
           "type": "string"
@@ -956,6 +957,13 @@
           },
           "title": "Notes",
           "type": "array"
+        },
+        "raw_excerpt": {
+          "default": "",
+          "description": "失败/降级时留一段模型原始输出（截断到 600 字）。没有它就只能看到『Expecting , delimiter』这种报错，无法判断是输出被截断、还是模型拼了非法 JSON —— 实测踩过",
+          "maxLength": 600,
+          "title": "Raw Excerpt",
+          "type": "string"
         }
       },
       "title": "ValidationReport",
