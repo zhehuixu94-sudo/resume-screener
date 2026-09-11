@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "job_id": "jushi_teacher",
-  "config_version": "7",
+  "config_version": "8",
   "company_id": "local",
   "job_title": "少儿计算机竞赛培训班老师（巨石教育）",
   "jd": "岗位职责：面向中小学生讲授计算机竞赛课程（信息学奥赛 / 程序设计 / 算法思维），负责课程讲解、习题带练、作业批改与学习反馈；参与竞赛班教学设计与题库整理；与家长沟通学习进度。\n任职要求（**综合达标**，不是逐条一票否决）：1) 本科及以上学历，计算机类相关专业（计算机科学与技术、软件工程、网络工程、信息安全、数字媒体技术等）；2) 通过大学英语四级（CET-4）；3) 有计算机竞赛经历（ACM/ICPC、蓝桥杯、NOIP/信息学奥赛、程序设计竞赛、CTF 等），能讲清自己做过什么题、怎么练的；4) 有面向学生的授课、助教或带训经历者优先；5) 表达清晰、有耐心，能给中小学生讲明白抽象概念。\n说明：招聘方明确表示几项条件是综合起来看人，不因单项缺失直接淘汰（例：四级没过但拿过 ACM 金牌的人不能被刷掉）。",
@@ -306,7 +306,7 @@
     }
   ],
   "scoring": {
-    "pass_line": 43.3,
+    "pass_line": 41.1,
     "pass_line_source": "anchor_calibrated",
     "band_width": 5,
     "dimension_aggregation": "top2_mean",
@@ -325,31 +325,31 @@
       {
         "label": "合格",
         "resume_ref": "resume_001.txt",
-        "score": 45.5
+        "score": 48.9
       },
       {
         "label": "合格",
         "resume_ref": "resume_004.txt",
-        "score": 43.3
+        "score": 41.1
       },
       {
         "label": "不合格",
         "resume_ref": "个人简历-候选人B .pdf",
-        "score": 35.2
+        "score": 16.5
       },
       {
         "label": "不合格",
         "resume_ref": "候选人C-自媒体.pdf",
-        "score": 26.5
+        "score": 18.8
       },
       {
         "label": "不合格",
         "resume_ref": "个人简历.docx",
-        "score": 15.4
+        "score": 14.9
       }
     ],
-    "good_group_min": 43.3,
-    "calibrated_at": "2026-09-11 15:19",
+    "good_group_min": 41.1,
+    "calibrated_at": "2026-09-11 15:43",
     "notes": "合格组与不合格组分数分得开"
   },
   "interview_focus": "重点验证两点：一是他自己做过的竞赛题能不能讲明白（是真做过还是挂名）；二是能不能把一道算法题用中小学生听得懂的话讲出来，现场让他讲一遍。",
