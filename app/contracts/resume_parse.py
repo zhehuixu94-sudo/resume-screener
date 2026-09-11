@@ -18,6 +18,7 @@ from .common import (
     Normalization,
     Quality,
     SCHEMA_VERSION,
+    Version,
     SourceInfo,
     StageMeta,
     Strict,
@@ -53,7 +54,7 @@ class ParseStats(Strict):
 
 
 class ResumeParse(Strict):
-    schema_version: Literal[SCHEMA_VERSION] = SCHEMA_VERSION
+    schema_version: Version = SCHEMA_VERSION
     resume_id: str = Field(min_length=1, description="默认 = 文件 sha256 前 16 位（同一份简历重复上传视为同一实体）")
     source: SourceInfo
     normalization: Normalization

@@ -107,28 +107,25 @@ class DecisionOutcome:
 
 
 def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, fit: LlmFitOutput | None,
-           stage_status: dict[str, str], anchored_span_ids: set[str]) -> DecisionOutcome:
+           stage_status: dict[str, str], anchored_span_ids: set[str],
+           hard_filters: list[HardFilterResult] | None = None) -> DecisionOutcome:
+    """三段带 + 双通道判定。
+
+    hard_filters 由 `pipeline.hard_filters.check_hard_filters()` 规则层给出（三态）：
+      fail    → 自动淘汰（要有证据，未锚定会被 sync_decisions_with_evidence 降级为转人工）
+      unknown → 转人工（证据不足，不许淘汰）
+      pass    → 继续走分数判定
+    模型自己说"触发了门槛"但规则层判通过时 → 转人工（两路打架一律交人，不自动放行也不自动淘汰）。
+    """
     sc = job.scoring
     pass_thr = sc.pass_line + sc.band_width
     rej_thr = sc.pass_line - sc.band_width
     conflicts: list[Conflict] = []
-
-    # 硬门槛结果：模型定位到具体门槛才算 fail；只给了描述没给 id → unknown（不许据此自动淘汰）
-    veto_text = compare.veto_triggered if compare else None
-    veto_ids = list(compare.veto_filter_ids) if compare else []
-    hard: list[HardFilterResult] = []
-    for f in job.hard_filters:
-        if veto_ids:
-            res = "fail" if f.id in veto_ids else "pass"
-            reason = "整体判定指出该门槛被触发" if res == "fail" else "整体判定未指出触发"
-        elif veto_text:
-            res, reason = "unknown", "指出触发硬门槛但未定位到具体门槛"
-        else:
-            res, reason = "pass", "整体判定未指出触发任何硬门槛"
-        hard.append(HardFilterResult(id=f.id, name=f.name, rule=f.rule, veto=f.veto, result=res, reason=reason))
+    hard = hard_filters or []
 
     llm_v = compare.verdict if compare else "边缘"
     conf = compare.confidence if compare else 0.0
+    model_veto = bool(compare and (compare.veto_triggered or compare.veto_filter_ids))
 
     # 0) 降级：任何一段模型输出降级/失败 → 只能转人工
     degraded = [k for k, v in stage_status.items() if v in ("degraded", "failed")]
@@ -138,16 +135,26 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
                                reason=f"模型输出降级（{'、'.join(degraded)}）→ 转人工复核，不做自动处置",
                                conflicts=conflicts, hard_filters=hard)
 
-    # 1) 硬门槛
-    if veto_ids:
-        conflicts.append(Conflict(type="veto_triggered", detail=veto_text or "触发硬门槛"))
+    # 1) 硬门槛：规则层 fail 才自动淘汰
+    fails = [h for h in hard if h.veto and h.result == "fail"]
+    unknown = [h for h in hard if h.veto and h.result == "unknown"]
+    if fails:
+        detail = "；".join(f"{h.name}：{h.reason}" for h in fails)
+        conflicts.append(Conflict(type="veto_triggered", detail=detail))
         return DecisionOutcome(verdict="不达标", decision="auto_reject",
-                               reason=f"触发硬性门槛（{'、'.join(veto_ids)}）：{veto_text}", conflicts=conflicts,
-                               hard_filters=hard)
-    if veto_text:
-        conflicts.append(Conflict(type="veto_triggered", detail=f"未定位门槛：{veto_text}"))
+                               reason=f"触发硬性门槛（{'、'.join(h.id for h in fails)}）：{detail}",
+                               conflicts=conflicts, hard_filters=hard)
+    if unknown:
+        detail = "；".join(f"{h.name}：{h.reason}" for h in unknown)
+        conflicts.append(Conflict(type="veto_triggered", detail=f"证据不足：{detail}"))
         return DecisionOutcome(verdict="边缘", decision="manual_review",
-                               reason=f"指出触发硬门槛但无法定位具体门槛（{veto_text}）→ 转人工确认",
+                               reason=f"硬门槛证据不足（{'、'.join(h.id for h in unknown)}）→ 转人工核实：{detail}",
+                               conflicts=conflicts, hard_filters=hard)
+    if model_veto:
+        conflicts.append(Conflict(type="llm_vs_rule",
+                                  detail=f"规则层判所有硬门槛通过，但模型认为触发：{compare.veto_triggered if compare else ''}"))
+        return DecisionOutcome(verdict="边缘", decision="manual_review",
+                               reason="模型认为触发硬门槛，规则层关键词预检未确认 → 转人工确认",
                                conflicts=conflicts, hard_filters=hard)
 
     llm_pass, llm_border = llm_v == "达标", llm_v == "边缘"

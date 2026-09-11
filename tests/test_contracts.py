@@ -38,9 +38,9 @@ def test_三件套与五段输出都有schema():
 
 
 # ---------------------------------------------------------------- 岗位配置
-def test_六个岗位配置过契约():
+def test_所有岗位配置过契约():
     rows = check_job_configs(os.path.join(ROOT, "config"))
-    assert len(rows) == 6
+    assert len(rows) >= 6                                  # 原型的 6 个 + 后续新增岗位
     bad = [r for r in rows if not r.get("ok")]
     assert not bad, bad
 
@@ -171,27 +171,121 @@ def test_判定_未锚定证据阻断自动淘汰():
     assert out.decision == "manual_review" and "unanchored_evidence" in [c.type for c in out.conflicts]
 
 
-def test_判定_门槛触发但定位不到门槛则转人工():
-    from app.pipeline.rules import decide
-    cfg = _cfg()
-    cmp = _cmp("不达标", 0.9)
-    cmp.veto_triggered = "学历专业不符且缺乏必备能力"
-    out = decide(cfg, base_total=10, compare=cmp, fit=None,
-                 stage_status={"label": "ok", "compare": "ok", "fit": "ok"}, anchored_span_ids=set())
-    assert out.decision == "manual_review"
-    assert all(h.result == "unknown" for h in out.hard_filters if h.veto)
+def _hard(cfg, **results):
+    """构造规则层硬门槛结果。"""
+    from app.contracts.evaluation import HardFilterResult
+    return [HardFilterResult(id=f.id, name=f.name, rule=f.rule, veto=f.veto,
+                             result=results.get(f.id, "pass"), reason="测试构造")
+            for f in cfg.hard_filters]
 
 
-def test_判定_门槛定位到具体id才自动淘汰():
+def test_判定_规则层门槛不通过才自动淘汰():
     from app.pipeline.rules import decide
     cfg = _cfg()
-    cmp = _cmp("不达标", 0.9)
-    cmp.veto_triggered = "学历不满足本科及以上"
-    cmp.veto_filter_ids = ["edu"]
-    out = decide(cfg, base_total=10, compare=cmp, fit=None,
-                 stage_status={"label": "ok", "compare": "ok", "fit": "ok"}, anchored_span_ids=set())
+    out = decide(cfg, base_total=10, compare=_cmp("不达标", 0.9), fit=None,
+                 stage_status={"label": "ok", "compare": "ok", "fit": "ok"}, anchored_span_ids=set(),
+                 hard_filters=_hard(cfg, edu="fail"))
     assert out.decision == "auto_reject"
     assert [h.result for h in out.hard_filters if h.id == "edu"] == ["fail"]
+
+
+def test_判定_门槛证据不足转人工():
+    from app.pipeline.rules import decide
+    cfg = _cfg()
+    out = decide(cfg, base_total=10, compare=_cmp("不达标", 0.9), fit=None,
+                 stage_status={"label": "ok", "compare": "ok", "fit": "ok"}, anchored_span_ids=set(),
+                 hard_filters=_hard(cfg, edu="unknown"))
+    assert out.decision == "manual_review" and "veto_triggered" in [c.type for c in out.conflicts]
+
+
+def test_判定_模型说触发但规则层判通过则转人工():
+    """实测事故：模型把写了本科、网络空间安全的候选人判成『未提及学历』并自动淘汰。"""
+    from app.pipeline.rules import decide
+    cfg = _cfg()
+    cmp = _cmp("不达标", 0.9)
+    cmp.veto_triggered = "未明确提及学历为本科及以上"
+    cmp.veto_filter_ids = ["edu"]
+    out = decide(cfg, base_total=60, compare=cmp, fit=None,
+                 stage_status={"label": "ok", "compare": "ok", "fit": "ok"}, anchored_span_ids=set(),
+                 hard_filters=_hard(cfg))          # 规则层：三条全部 pass
+    assert out.decision == "manual_review"
+    assert "llm_vs_rule" in [c.type for c in out.conflicts]
+
+
+def _parse_stub(text: str, evidences: list[tuple[str, str]] | None = None):
+    """构造一份最小可用的 ResumeParse，用于硬门槛规则层测试。"""
+    from app.contracts.common import (Anchoring, CharRange, EvidenceSpan, Normalization,
+                                      Quality, QualityCheck, SourceInfo, StageMeta)
+    from app.contracts.resume_parse import Block, ParsedItem, ParseStats, ResumeParse
+    evs, items = [], []
+    for i, (iid, ev_text) in enumerate((evidences or []), start=1):
+        pos = text.find(ev_text)
+        span = CharRange(start=pos, end=pos + len(ev_text)) if pos >= 0 else None
+        evs.append(EvidenceSpan(span_id=f"ev_{i:04d}", item_id=iid, text=ev_text, span=span,
+                                anchoring=Anchoring(method="exact" if span else "none", similarity=1.0 if span else 0.0)))
+        items.append(ParsedItem(item_id=iid, block_id="b1", capability="测试项",
+                                span_id=f"ev_{i:04d}" if span else None, anchored=bool(span)))
+    if not items:
+        items = [ParsedItem(item_id="b1.i1", block_id="b1", capability="测试项", anchored=False)]
+    return ResumeParse(
+        resume_id="test0000test0000",
+        source=SourceInfo(file_name="t.txt", file_sha256="0" * 64, file_format="txt", extractor="builtin", pages=1),
+        normalization=Normalization(ops=["strip"], raw_char_count=len(text), norm_char_count=len(text)),
+        quality=Quality(gate_passed=True, checks=[QualityCheck(name="可读字符数", value=str(len(text)), ok=True)]),
+        blocks=[Block(block_id="b1", section="测试", title="测试块", item_ids=[i.item_id for i in items])],
+        items=items, evidence=evs,
+        stats=ParseStats(blocks=1, items=len(items), evidence_total=len(evs),
+                         evidence_anchored=sum(1 for e in evs if e.span),
+                         evidence_unanchored=sum(1 for e in evs if not e.span),
+                         evidence_coverage=1.0),
+        text=text,
+        llm=StageMeta(stage="parse", model_id="test", prompt_version="p-test", prompt_hash="h"))
+
+
+def test_硬门槛预检_本科与对口专业不被冤枉():
+    """实测事故回归：简历里写着本科 + 网络空间安全，模型却说『未提及学历』并据此淘汰。"""
+    import json as _json
+    from app.contracts import JobConfig
+    from app.pipeline.hard_filters import check_hard_filters, veto_summary
+    cfg = JobConfig.model_validate(_json.load(open(os.path.join(ROOT, "config", "job_jushi_teacher.json"),
+                                                  encoding="utf-8")))
+    text = "教育经历 示例大学 网络空间安全 本科 2022.9-2026.6 竞赛：CTF 市级三等奖"
+    parse = _parse_stub(text, [("b1.i1", "示例大学 网络空间安全 本科"), ("b1.i2", "CTF 市级三等奖")])
+    res = check_hard_filters(cfg, parse, None)
+    fails, unknown, passes = veto_summary(res)
+    assert "edu" in passes and "major" in passes, [(r.id, r.result, r.reason) for r in res]
+    assert "cet4" in unknown, "没写四级应当是证据不足（转人工），不是不通过"
+    assert not fails
+    edu = next(r for r in res if r.id == "edu")
+    assert edu.evidence_span_ids, "命中关键词时要带上证据 span，报告才点得开"
+    # 抽取的证据没覆盖到关键词时：如实说明，不编 span
+    parse2 = _parse_stub("本人本科毕业，另有专科经历", [("b1.i1", "做过一个管理系统")])
+    res2 = check_hard_filters(cfg, parse2, None)
+    edu2 = next(r for r in res2 if r.id == "edu")
+    assert edu2.result == "pass" and edu2.evidence_span_ids == []
+    assert "无法高亮" in edu2.reason
+
+
+def test_硬门槛预检_大专与不对口专业判不通过():
+    import json as _json
+    from app.contracts import JobConfig
+    from app.pipeline.hard_filters import check_hard_filters, veto_summary
+    cfg = JobConfig.model_validate(_json.load(open(os.path.join(ROOT, "config", "job_jushi_teacher.json"),
+                                                  encoding="utf-8")))
+    parse = _parse_stub("教育经历 某某学院 工程管理 大专", [("b1.i1", "工程管理")])
+    fails, unknown, _passes = veto_summary(check_hard_filters(cfg, parse, None))
+    assert "edu" in fails and "major" in fails
+
+
+def test_硬门槛预检_命中六级也算满足四级():
+    import json as _json
+    from app.contracts import JobConfig
+    from app.pipeline.hard_filters import check_hard_filters, veto_summary
+    cfg = JobConfig.model_validate(_json.load(open(os.path.join(ROOT, "config", "job_jushi_teacher.json"),
+                                                  encoding="utf-8")))
+    parse = _parse_stub("本科 计算机科学与技术 英语：CET-6 通过", [("b1.i1", "CET-6")])
+    _fails, unknown, passes = veto_summary(check_hard_filters(cfg, parse, None))
+    assert "cet4" in passes and "cet4" not in unknown
 
 
 def _cmp(verdict: str, conf: float):

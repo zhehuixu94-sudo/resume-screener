@@ -51,6 +51,7 @@ from ..llm.prompts import (
     render_items,
 )
 from ..llm.structured import call_structured
+from .hard_filters import check_hard_filters
 from .rules import bonus_layer, decide, rule_layer, sync_decisions_with_evidence
 
 
@@ -160,7 +161,9 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                    anchored=sp.anchored, anchor_method=sp.anchoring.method))
     anchored_map = {c.span_id: c.anchored for c in cited}
 
-    outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map))
+    # 硬门槛：规则层按配置关键词预检（模型只负责解释与给证据，不允许它随手把门槛标成触发）
+    hard = check_hard_filters(job, parse, compare_obj)
+    outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard)
     outcome = sync_decisions_with_evidence(outcome, anchored_map,
                                            [d.best_span_id or "" for d in rules.dimensions])
 

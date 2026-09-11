@@ -70,6 +70,12 @@
           "default": "",
           "title": "Calibrated At",
           "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "description": "标定诊断：两组分数是否分得开、样本是否够数、缺哪些硬证据",
+          "title": "Notes",
+          "type": "string"
         }
       },
       "title": "Calibration",
@@ -189,6 +195,7 @@
     },
     "HardFilter": {
       "additionalProperties": false,
+      "description": "硬门槛（一票否决）。\n\n判定口径：**先规则后模型**。配了 keywords_pass / keywords_fail 的门槛由规则层在简历全文里判定，\n模型不再有机会误报\"哪条门槛被触发\"（实测模型会把明明写了的本科判成\"未提及\"）；\n没配关键词的门槛退回模型判定（旧行为），并且只认模型能定位到具体门槛的情形。",
       "properties": {
         "id": {
           "minLength": 1,
@@ -218,12 +225,38 @@
           "type": "boolean"
         },
         "keywords": {
-          "description": "可选：辅助定位与该门槛相关的原文",
+          "description": "可选：辅助定位与该门槛相关的原文（正负关键词的并集）",
           "items": {
             "type": "string"
           },
           "title": "Keywords",
           "type": "array"
+        },
+        "keywords_pass": {
+          "description": "命中任一 → 判通过",
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords Pass",
+          "type": "array"
+        },
+        "keywords_fail": {
+          "description": "命中任一且未命中 pass 关键词 → 判不通过",
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords Fail",
+          "type": "array"
+        },
+        "unknown_policy": {
+          "default": "manual_review",
+          "description": "两边关键词都没命中时的处置：转人工（默认，宁可多看）或不通过",
+          "enum": [
+            "manual_review",
+            "fail"
+          ],
+          "title": "Unknown Policy",
+          "type": "string"
         }
       },
       "required": [
@@ -294,8 +327,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": "1.0.0",
       "default": "1.0.0",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
       "title": "Schema Version",
       "type": "string"
     },

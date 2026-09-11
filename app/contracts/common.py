@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.0.0"            # 当前版本；新增可选字段不递增，破坏性变更才递增
+Version = Annotated[str, Field(pattern=r"^\d+\.\d+\.\d+$")]
+"""版本字段类型：只能是 x.y.z，但**不锁死常量**——否则新版本代码读不了库里旧版本的 payload。"""
 
 # ---------------------------------------------------------------- 受控词表
 Relevance = Literal["强", "中", "弱", "无关"]

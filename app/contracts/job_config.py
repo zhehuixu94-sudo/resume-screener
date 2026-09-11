@@ -15,16 +15,27 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .common import AnchorLevel, SCHEMA_VERSION, Strict
+from .common import AnchorLevel, SCHEMA_VERSION, Strict, Version
 
 
 class HardFilter(Strict):
+    """硬门槛（一票否决）。
+
+    判定口径：**先规则后模型**。配了 keywords_pass / keywords_fail 的门槛由规则层在简历全文里判定，
+    模型不再有机会误报"哪条门槛被触发"（实测模型会把明明写了的本科判成"未提及"）；
+    没配关键词的门槛退回模型判定（旧行为），并且只认模型能定位到具体门槛的情形。
+    """
+
     id: str = Field(min_length=1)
     name: str = Field(min_length=1)
     rule: str = Field(min_length=2, description="人话规则，如「本科及以上」，会原样进 prompt")
     veto: bool = True
     require_evidence: bool = Field(default=True, description="要求系统必须找到证据才判触发")
-    keywords: list[str] = Field(default_factory=list, description="可选：辅助定位与该门槛相关的原文")
+    keywords: list[str] = Field(default_factory=list, description="可选：辅助定位与该门槛相关的原文（正负关键词的并集）")
+    keywords_pass: list[str] = Field(default_factory=list, description="命中任一 → 判通过")
+    keywords_fail: list[str] = Field(default_factory=list, description="命中任一且未命中 pass 关键词 → 判不通过")
+    unknown_policy: Literal["manual_review", "fail"] = Field(default="manual_review",
+        description="两边关键词都没命中时的处置：转人工（默认，宁可多看）或不通过")
 
 
 WEAK_ANCHORS = {"无", "无证据", "一般", "不熟悉", "无相关经历", "无经验", "不清楚", "无相关经验"}
@@ -71,6 +82,7 @@ class Calibration(Strict):
     anchors: list[CalibrationAnchor] = Field(default_factory=list)
     good_group_min: float | None = None
     calibrated_at: str = ""
+    notes: str = Field(default="", description="标定诊断：两组分数是否分得开、样本是否够数、缺哪些硬证据")
 
 
 class Scoring(Strict):
@@ -83,7 +95,7 @@ class Scoring(Strict):
 
 
 class JobConfig(Strict):
-    schema_version: Literal[SCHEMA_VERSION] = SCHEMA_VERSION
+    schema_version: Version = SCHEMA_VERSION
     job_id: str = Field(min_length=1, pattern=r"^[a-z0-9_]+$")
     config_version: str = Field(default="1", min_length=1, description="配置改动递增；评分行记它才能复现历史分数")
     company_id: str = Field(default="local", description="多租户预留：不做 RLS，但每条数据都带它")

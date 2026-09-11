@@ -22,6 +22,7 @@ from .common import (
     Relevance,
     SCHEMA_VERSION,
     StageMeta,
+    Version,
     Strict,
     ValidationStatus,
     Verdict,
@@ -147,7 +148,7 @@ class EvalStages(Strict):
 
 # ---------------------------------------------------------------- 主对象
 class Evaluation(Strict):
-    schema_version: Literal[SCHEMA_VERSION] = SCHEMA_VERSION
+    schema_version: Version = SCHEMA_VERSION
     eval_id: str = Field(min_length=1)
     resume_id: str = Field(min_length=1)
     job_id: str = Field(min_length=1)
