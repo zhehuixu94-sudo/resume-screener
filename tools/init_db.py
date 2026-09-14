@@ -21,7 +21,8 @@ from app.store import Repository, db  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLES = ["job_config", "resume", "application", "resume_parse", "evidence_span", "evaluation", "audit_log",
-          "resume_chunk"]
+          "resume_chunk", "review_decision", "spot_check_batch", "spot_check_item", "calibration",
+          "basic_item_label"]
 
 
 def main() -> int:

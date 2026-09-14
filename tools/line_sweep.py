@@ -22,61 +22,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.contracts import Evaluation, JobConfig                       # noqa: E402
-from app.contracts.resume_parse import ResumeParse                     # noqa: E402
-from app.pipeline.hard_filters import check_hard_filters              # noqa: E402
-from app.pipeline.rules import bonus_layer, decide, rule_layer, sync_decisions_with_evidence  # noqa: E402
-from app.store import db                                              # noqa: E402
-
-
-def load_rows(cfg: JobConfig, src_version: str | None = None) -> list[dict]:
-    rows = db.fetch_all(
-        """SELECT e.payload, e.base_total, r.file_name, a.resume_id
-             FROM application a
-             JOIN resume r ON r.resume_id = a.resume_id
-             LEFT JOIN evaluation e ON e.application_id = a.application_id
-            WHERE a.company_id = %s AND a.job_id = %s AND a.config_version = %s
-              AND e.payload IS NOT NULL""",
-        (cfg.company_id, cfg.job_id, src_version or cfg.config_version))
-    out = []
-    for r in rows:
-        old = Evaluation.model_validate(r["payload"])
-        prow = db.fetch_one("SELECT payload FROM resume_parse WHERE resume_id = %s", (r["resume_id"],))
-        if not prow:
-            continue
-        parse = ResumeParse.model_validate(prow["payload"])
-        labeled = []
-        for d in old.dimensions:
-            for it in d.items:
-                labeled.append({"item_id": it.item_id, "capability": it.capability, "relevance": it.relevance,
-                                "difficulty": it.difficulty, "dimension": d.id, "reason": it.reason,
-                                "confidence": it.confidence, "span_id": it.span_id})
-        for u in old.unmapped_items:
-            labeled.append({"item_id": u.item_id, "capability": u.capability, "relevance": u.relevance,
-                            "difficulty": u.difficulty, "dimension": None, "reason": u.reason,
-                            "confidence": None, "span_id": u.span_id})
-        out.append({"file": r["file_name"], "parse": parse, "labeled": labeled, "old": old})
-    return out
-
-
-def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
-                     reject_border_when_low: bool | None = None) -> str:
-    """按指定达标线重算处置（模型输出用库里存的，只有分数线在变）。"""
-    parse, labeled, old = row["parse"], row["labeled"], row["old"]
-    upd = {"pass_line": line, "band_width": band}
-    if reject_border_when_low is not None:
-        upd["reject_border_when_low"] = reject_border_when_low
-    sc = cfg.scoring.model_copy(update=upd)
-    cfg2 = cfg.model_copy(update={"scoring": sc})
-    rules = rule_layer(cfg2, labeled)
-    bonus = bonus_layer(cfg2, parse, labeled)
-    hard = check_hard_filters(cfg2, parse, old.llm_compare)
-    anchored = {c.span_id: c.anchored for c in old.cited_evidence}
-    outcome = decide(cfg2, rules.base_total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
-                     dim_points={d.id: d.points for d in rules.dimensions},
-                     bonus_names={b.name for b in bonus})
-    outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions])
-    return outcome.decision
+from app.contracts import JobConfig                                   # noqa: E402
+from app.pipeline.replay import decide_with_line, load_rows           # noqa: E402
 
 
 def main() -> int:

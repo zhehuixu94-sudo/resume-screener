@@ -30,3 +30,6 @@ desktop.ini
 build/
 dist/
 *.spec
+
+# ---- 校准时的配置版本备份（内容已存 calibration 表，避免仓库噪音）----
+config/history/

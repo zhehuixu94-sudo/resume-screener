@@ -80,7 +80,6 @@ CREATE TABLE IF NOT EXISTS resume_parse (
 CREATE TABLE IF NOT EXISTS evidence_span (
     span_id        TEXT NOT NULL,                 -- 只在同一份简历内唯一（ev_0001…），所以主键是复合的
     resume_id      TEXT NOT NULL REFERENCES resume(resume_id) ON DELETE CASCADE,
-    resume_id      TEXT NOT NULL REFERENCES resume(resume_id) ON DELETE CASCADE,
     item_id        TEXT NOT NULL,
     block_title    TEXT NOT NULL DEFAULT '',
     text           TEXT NOT NULL,
@@ -156,3 +155,95 @@ BEGIN
         ALTER TABLE evidence_span ADD PRIMARY KEY (resume_id, span_id);
     END IF;
 END $$;
+
+-- ---------------------------------------------------------------- 复核（HR 的人工动作，append-only）
+-- 两个库就是这张表的两个影子：
+--   自动淘汰库  = evaluation.decision = 'auto_reject' 的件（视图，不复制数据，避免双写漂移）
+--   人工淘汰库  = 本表 action='reject' 且未被清理的件（cleared_at 为空），支持手动清理（软删除 + 审计）
+CREATE TABLE IF NOT EXISTS review_decision (
+    review_id      BIGSERIAL PRIMARY KEY,
+    company_id     TEXT NOT NULL DEFAULT 'local',
+    application_id BIGINT NOT NULL REFERENCES application(application_id) ON DELETE CASCADE,
+    resume_id      TEXT NOT NULL,
+    job_id         TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    action         TEXT NOT NULL,                 -- pass（该留）/ reject（该淘汰）
+    source         TEXT NOT NULL DEFAULT 'manual',-- spot_check（抽检）/ manual（主动复核）
+    note           TEXT NOT NULL DEFAULT '',
+    actor          TEXT NOT NULL DEFAULT 'hr',
+    archived_path  TEXT NOT NULL DEFAULT '',      -- 通过件的归档路径（复制到「简历/<日期>/」后的落点）
+    cleared_at     TIMESTAMPTZ,                   -- 人工淘汰库被手动清理的时间（软删除，不物理删）
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_review_action ON review_decision (company_id, job_id, action);
+CREATE INDEX IF NOT EXISTS idx_review_app ON review_decision (application_id);
+
+-- ---------------------------------------------------------------- 抽检批次（按天一批，不累加）
+-- 「不累加」的落地：每天一个批次，未复核的旧批次标记 expired 后不再展示；
+-- 未复核的简历**不算被抽过**，之后的批次仍可能抽到它（否则这些件既没人看、又永不入库，漏放样本就丢了）。
+CREATE TABLE IF NOT EXISTS spot_check_batch (
+    batch_id       BIGSERIAL PRIMARY KEY,
+    company_id     TEXT NOT NULL DEFAULT 'local',
+    job_id         TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    check_date     DATE NOT NULL,
+    drawn          INT NOT NULL DEFAULT 0,        -- 本批实际抽到几份
+    want           INT NOT NULL DEFAULT 5,        -- 本批目标份数
+    pool_size      INT NOT NULL DEFAULT 0,        -- 抽之前池子有多大（池子不足时如实记录）
+    note           TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (company_id, job_id, config_version, check_date)
+);
+
+CREATE TABLE IF NOT EXISTS spot_check_item (
+    item_id        BIGSERIAL PRIMARY KEY,
+    batch_id       BIGINT NOT NULL REFERENCES spot_check_batch(batch_id) ON DELETE CASCADE,
+    application_id BIGINT NOT NULL REFERENCES application(application_id) ON DELETE CASCADE,
+    resume_id      TEXT NOT NULL,
+    job_id         TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    check_date     DATE NOT NULL,
+    score          REAL,                          -- 抽中时的规则分（写清单时展示，便于 HR 对比）
+    state          TEXT NOT NULL DEFAULT 'pending', -- pending / passed / rejected / expired
+    reviewed_at    TIMESTAMPTZ,
+    UNIQUE (batch_id, application_id)             -- 同一天不会重复抽同一份
+);
+CREATE INDEX IF NOT EXISTS idx_spot_state ON spot_check_item (job_id, state, check_date);
+
+-- ---------------------------------------------------------------- 口径校准（全自动更新 + 可回滚）
+-- 每次校准记一条：触发原因、用了哪些样本、改前改后的完整配置快照、是否被回滚。
+-- 回滚 = 用 before_payload 覆盖回配置文件（并再记一条 calibration 行，留痕）。
+CREATE TABLE IF NOT EXISTS calibration (
+    calibration_id BIGSERIAL PRIMARY KEY,
+    company_id     TEXT NOT NULL DEFAULT 'local',
+    job_id         TEXT NOT NULL,
+    trigger        TEXT NOT NULL,                 -- manual（用户主动）/ spot_check_error（当日抽检误差≥2）
+    from_version   TEXT NOT NULL,
+    to_version     TEXT NOT NULL,
+    status         TEXT NOT NULL,                 -- applied / skipped（样本不足或两组分不开）
+    reason         TEXT NOT NULL DEFAULT '',
+    samples        JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {pos:[...], neg:[...], 分数分布}
+    changed        JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {pass_line: {before, after}, ...}
+    before_payload JSONB NOT NULL,                -- 改前整份 JobConfig（回滚依据）
+    after_payload  JSONB NOT NULL,                -- 改后整份 JobConfig
+    reverted_at    TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_calibration_job ON calibration (job_id, created_at DESC);
+
+-- ---------------------------------------------------------------- 基本项勾选（多选校准的原始标注）
+-- HR 在每份简历上勾「哪些是基本项」（只勾基本项，不勾优秀项）——这是给校准用的人工标注。
+CREATE TABLE IF NOT EXISTS basic_item_label (
+    label_id       BIGSERIAL PRIMARY KEY,
+    company_id     TEXT NOT NULL DEFAULT 'local',
+    application_id BIGINT NOT NULL REFERENCES application(application_id) ON DELETE CASCADE,
+    job_id         TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    item_key       TEXT NOT NULL,                 -- 证据条目在评估里的唯一键（item_id 或 evc_xxx）
+    dimension      TEXT NOT NULL DEFAULT '',      -- 勾中时的维度归属（沉淀岗位标准用）
+    is_basic       BOOLEAN NOT NULL DEFAULT true, -- false = HR 明确把它排除出基本项
+    actor          TEXT NOT NULL DEFAULT 'hr',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (application_id, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_basic_item_job ON basic_item_label (job_id, dimension);
