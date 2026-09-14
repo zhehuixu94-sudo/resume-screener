@@ -300,7 +300,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})
     outcome = sync_decisions_with_evidence(outcome, anchored_map,
-                                           [d.best_span_id or "" for d in rules.dimensions])
+                                           [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     # 稳定性闸门：没测过/不达标时不许自动淘汰（分数会漂，拿它刷人等于随机刷人）
     outcome = apply_gate(outcome, stability_latest(job.job_id, job.config_version),
                          job_id=job.job_id, config_version=job.config_version)

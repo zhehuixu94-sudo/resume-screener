@@ -64,7 +64,7 @@ def rescore_batch(job: JobConfig, *, apply: bool = True, verbose: bool = True) -
                          dim_points={d.id: d.points for d in ev.dimensions},
                          bonus_names={b.name for b in ev.bonus_hits})
         outcome = sync_decisions_with_evidence(outcome, anchored,
-                                               [d.best_span_id or "" for d in ev.dimensions])
+                                               [d.best_span_id or "" for d in ev.dimensions if d.points > 0])
         outcome = apply_gate(outcome, stability_latest(job.job_id, job.config_version),
                              job_id=job.job_id, config_version=job.config_version)
         ev2 = ev.model_copy(update={

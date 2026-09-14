@@ -83,7 +83,7 @@ def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
     outcome = decide(cfg2, total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})
-    outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions])
+    outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     return _finish(cfg, outcome, gate=gate).decision
 
 
@@ -110,5 +110,5 @@ def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float,
     outcome = decide(cfg2, rules.base_total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})
-    outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions])
+    outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     return _finish(cfg, outcome, gate=gate).decision

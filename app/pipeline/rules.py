@@ -304,7 +304,14 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
 
 def sync_decisions_with_evidence(outcome: DecisionOutcome, cited_anchored: dict[str, bool],
                                   best_spans: list[str]) -> DecisionOutcome:
-    """证据侧安全兜底：自动淘汰若有任何未锚定引用 → 降级为转人工（契约里也有同样的硬约束）。"""
+    """证据侧安全兜底：自动淘汰/自动达标若踩到未锚定证据 → 降级为转人工（契约里也有同样的硬约束）。
+
+    ⚠️ `best_spans` 只传**计分维度**（points > 0）的最强证据 span，且空串也算"未锚定"。
+    实测踩过：某个维度最强条目的证据锚定失败 → `span_id` 为空，这里的 `if s` 把它跳过了、
+    契约却把它当"未锚定"→ 直接抛 ValidationError 整份评估失败（跑批里表现为偶发"评估异常"）。
+    两处口径必须逐字一致：**空 span 与未锚定同等对待**。
+    传参方要按 `[d.best_span_id or "" for d in dimensions if d.points > 0]` 过滤，别把 0 分维度算进来。
+    """
     if outcome.decision == "auto_reject":
         bad = sorted({s for s, ok in cited_anchored.items() if not ok})
         if bad:
@@ -313,7 +320,7 @@ def sync_decisions_with_evidence(outcome: DecisionOutcome, cited_anchored: dict[
             outcome.reason = f"存在未锚定证据 {bad[:3]}（共 {len(bad)} 条），不允许自动淘汰 → 转人工"
             outcome.conflicts.append(Conflict(type="unanchored_evidence", detail=f"未锚定证据：{bad[:5]}"))
     if outcome.decision == "auto_pass":
-        weak = [s for s in best_spans if s and not cited_anchored.get(s, False)]
+        weak = [s for s in best_spans if not s or not cited_anchored.get(s, False)]
         if weak:
             outcome.decision = "manual_review"
             outcome.verdict = "边缘"
