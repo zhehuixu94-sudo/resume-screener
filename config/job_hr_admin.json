@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "job_id": "hr_admin",
-  "config_version": "1",
+  "config_version": "2",
   "company_id": "local",
   "job_title": "行政 / 人事助理（应届）",
   "jd": "岗位职责：负责日常行政事务（办公用品、会议安排、来访接待）、员工入离职手续与档案管理、考勤统计与社保公积金资料整理、协助组织公司活动与招聘流程支持。\n任职要求：1) 本科及以上；2) 熟练使用 Office/WPS 办公软件，能规范整理表格与档案；3) 沟通表达能力好，做事细致有耐心；4) 有学生组织、活动组织或行政实习经历者优先。",
@@ -69,7 +69,22 @@
       "rule": "本科及以上",
       "veto": true,
       "require_evidence": true,
-      "keywords": []
+      "keywords": [],
+      "keywords_pass": [
+        "本科",
+        "学士",
+        "硕士",
+        "研究生",
+        "双学位"
+      ],
+      "keywords_fail": [
+        "大专",
+        "专科",
+        "中专",
+        "高中",
+        "初中",
+        "职高"
+      ]
     }
   ],
   "bonus": [
@@ -110,5 +125,5 @@
     "anchors": []
   },
   "interview_focus": "验证行政事务的真实参与度与细致程度",
-  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容）"
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容） v2：给 edu 硬门槛补 keywords_pass/keywords_fail（规则层判 pass/fail/unknown，两边都没命中→unknown→转人工不淘汰）；本次同时换成 300 份按档位分层的行政岗对照语料。"
 }
