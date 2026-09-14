@@ -206,6 +206,50 @@ class Repository:
         self.audit("requeue_degraded", "job", f"{cfg.job_id}@{cfg.config_version}", {"n": n})
         return n
 
+    def requeue_by_model(self, cfg: JobConfig, model: str) -> int:
+        """把「评估里用过指定模型」的行重新入队（评估重跑）。
+
+        用途：做同口径对照时，最怕整批里混着两个模型跑出来的行（实测踩过：批处理启动时探活
+        挑中了主干 122B，82/100 份用它跑，另 18 份是降本档，整批对照直接作废）。
+        用它可以只挑出「模型不对」的那些行重跑，不必整批重来。
+        """
+        row = db.execute(
+            """WITH upd AS (
+                   UPDATE application a
+                      SET state = 'pending_parse', attempts = 0, last_error = '', worker = '', locked_at = NULL,
+                          updated_at = now()
+                    WHERE a.company_id = %s AND a.job_id = %s AND a.config_version = %s
+                      AND EXISTS (SELECT 1 FROM evaluation e
+                                   WHERE e.application_id = a.application_id
+                                     AND EXISTS (SELECT 1 FROM jsonb_each(e.payload -> 'stages') AS kv
+                                                  WHERE kv.value ->> 'model_id' = %s))
+                RETURNING 1)
+               SELECT count(*) AS n FROM upd""",
+            (self.company_id, cfg.job_id, cfg.config_version, model), returning=True)
+        n = int((row or {}).get("n", 0))
+        self.audit("requeue_by_model", "job", f"{cfg.job_id}@{cfg.config_version}",
+                   {"model": model, "n": n})
+        return n
+
+    def reset_all(self, cfg: JobConfig) -> int:
+        """把该岗位该配置版本的所有行重新入队（解析结果保留，评估重跑）。
+
+        用途：换模型/换权重做**同口径对照**时，必须整批重跑；而 --force 会把解析也重跑
+        （解析是简历属性，与配置/模型无关，重跑纯属烧钱）。所以单独给一个入口。
+        """
+        row = db.execute(
+            """WITH upd AS (
+                   UPDATE application
+                      SET state = 'pending_parse', attempts = 0, last_error = '', worker = '', locked_at = NULL,
+                          updated_at = now()
+                    WHERE company_id = %s AND job_id = %s AND config_version = %s
+                RETURNING 1)
+               SELECT count(*) AS n FROM upd""",
+            (self.company_id, cfg.job_id, cfg.config_version), returning=True)
+        n = int((row or {}).get("n", 0))
+        self.audit("reset_all", "job", f"{cfg.job_id}@{cfg.config_version}", {"n": n})
+        return n
+
     def reset_stuck(self, cfg: JobConfig, *, states: Sequence[str] = ("parsing", "evaluating"),
                     include_failed: bool = False, lock_timeout_min: int = LOCK_TIMEOUT_MIN) -> int:
         """把卡住/失败的行恢复成可重跑（清 attempts 与锁）——运维入口，供 kill 后或人工重试用。

@@ -25,7 +25,7 @@ import json
 import os
 import sys
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 
 if __name__ == "__main__" and __package__ in (None, ""):        # 允许 python -m app.batch
@@ -33,7 +33,7 @@ if __name__ == "__main__" and __package__ in (None, ""):        # 允许 python 
 
 from .contracts import Evaluation, JobConfig                 # noqa: E402
 from .contracts.resume_parse import ResumeParse              # noqa: E402
-from .llm.client import SiliconFlowClient                    # noqa: E402
+from .llm.client import DEFAULT_TPM, SiliconFlowClient        # noqa: E402
 from .pipeline.evaluate import evaluate                      # noqa: E402
 from .pipeline.parse import parse_resume                     # noqa: E402
 from .report import render_matrix, render_report             # noqa: E402
@@ -64,8 +64,12 @@ def enqueue(job: JobConfig, paths: list[str], repo: Repository) -> int:
 
 # ---------------------------------------------------------------- 单个任务
 def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlowClient, *,
-                model: str | None, force: bool = False) -> dict:
-    """处理一行：状态机在库里推进，任一步失败都记录错误并停在可重试状态。"""
+                model: str | None, force: bool = False, force_eval: bool = False) -> dict:
+    """处理一行：状态机在库里推进，任一步失败都记录错误并停在可重试状态。
+
+    force      = 连解析一起重跑（解析结果不可信时才用）
+    force_eval = 只重跑评估、复用已有解析（换配置/换模型做对照时用：解析是简历属性，不必重复花钱）
+    """
     app_id, resume_id, state = int(row["application_id"]), row["resume_id"], row["state"]
     out = {"application_id": app_id, "resume_id": resume_id, "state": state, "action": ""}
 
@@ -74,7 +78,7 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
     has_parse = db.fetch_one("SELECT 1 AS ok FROM resume_parse WHERE resume_id = %s", (resume_id,)) is not None
     # 解析是"简历的属性"，与岗位/配置无关：已有解析结果就复用（换配置只重跑评估，省一次调用、分数也可比）。
     # 要重解析用 --force；被 kill 在 parsing 中途、或解析失败的行因为 has_parse 为假会自动重解析。
-    need_parse = force or not has_parse
+    need_parse = (force and not force_eval) or not has_parse
     if need_parse:
         meta = db.fetch_one("SELECT file_path FROM resume WHERE resume_id = %s", (resume_id,))
         path = (meta or {}).get("file_path") or ""
@@ -115,7 +119,7 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
                            WHERE kv.value IS NOT NULL
                              AND kv.value -> 'validation' ->> 'status' IN ('degraded', 'failed')) AS degraded
              FROM evaluation WHERE application_id = %s""", (app_id,))
-    if existing and not force and not existing["degraded"]:
+    if existing and not force and not force_eval and not existing["degraded"]:
         repo.set_state(app_id, "evaluated")
         out.update(state="evaluated", action="已评估（跳过）")
         return out
@@ -135,25 +139,49 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
 
 # ---------------------------------------------------------------- 主流程
 def run(job: JobConfig, repo: Repository, client: SiliconFlowClient, *, workers: int, limit: int | None,
-        model: str | None, force: bool = False, lock_timeout_min: int = 15) -> dict[str, int]:
+        model: str | None, force: bool = False, force_eval: bool = False,
+        lock_timeout_min: int = 15) -> dict[str, int]:
+    """工作队列式并发：谁空了就给谁补一行，而不是「凑一批等一批」。
+
+    为什么改：原来是 batch = claim(workers) → 等整批全完成再领下一批。实测量到吞吐只有
+    ~1 行/分钟（限速器其实允许 2.4 行/分钟）——因为每一批都被最慢的那一行（重试/修复）拖住，
+    其余 worker 干等。改成「完成一个补一个」后吞吐由限速器决定，不再被长尾拖累。
+    """
     stats: dict[str, int] = {}
     processed = 0
-    while True:
-        batch = min(workers, (limit - processed) if limit else workers)
-        if batch <= 0:
-            break
-        rows = repo.claim(job, limit=batch, lock_timeout_min=lock_timeout_min)
-        if not rows:
-            break
-        with ThreadPoolExecutor(max_workers=len(rows)) as pool:
-            futures = [pool.submit(process_one, r, job, repo, client, model=model, force=force) for r in rows]
-            for f in as_completed(futures):
-                res = f.result()
-                processed += 1
-                key = f"{res['state']}"
-                stats[key] = stats.get(key, 0) + 1
-                print(f"  [{processed}] {res['resume_id']} → {res['action'] or res['state']}", flush=True)
+    pending: set = set()
+
+    def note(fut) -> None:                                     # noqa: ANN001
+        nonlocal processed
+        res = fut.result()
+        processed += 1
+        key = f"{res['state']}"
+        stats[key] = stats.get(key, 0) + 1
+        print(f"  [{processed}] {res['resume_id']} → {res['action'] or res['state']}", flush=True)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        while True:
+            # 只要有空位就补活（limit 是「总共处理多少份」，所以补活数还要受剩余额度约束）
+            want = workers - len(pending)
+            if limit is not None:
+                want = min(want, limit - (processed + len(pending)))
+            while want > 0:
+                rows = repo.claim(job, limit=want, lock_timeout_min=lock_timeout_min)
+                if not rows:
+                    break
+                for r in rows:
+                    pending.add(pool.submit(process_one, r, job, repo, client, model=model,
+                                            force=force, force_eval=force_eval))
+                want = workers - len(pending)
+                if limit is not None:
+                    want = min(want, limit - (processed + len(pending)))
+            if not pending:
+                break
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for f in done:
+                note(f)
     return stats
+
 
 
 def reports(job: JobConfig, repo: Repository, outdir: str) -> list[str]:
@@ -180,7 +208,7 @@ def reports(job: JobConfig, repo: Repository, outdir: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="简历初筛批处理（M0 闭环）")
     ap.add_argument("cmd", choices=["enqueue", "run", "report", "all", "status", "retry",
-                                    "requeue-degraded"])
+                                    "requeue-degraded", "requeue-all", "requeue-model"])
     ap.add_argument("--job", default="config/job_secops.json")
     ap.add_argument("--resumes", nargs="*", default=None, help="简历文件/目录（目录会递归收集 pdf/docx/txt）")
     ap.add_argument("--workers", type=int, default=2, help="并发 worker 数（LLM 侧注意限流）")
@@ -191,21 +219,31 @@ def main() -> int:
     ap.add_argument("--fallback-model", default="Qwen/Qwen3.5-35B-A3B",
                     help="主干探活失败时自动切换的模型（实测主干端点会整段时间无响应）")
     ap.add_argument("--outdir", default="out/reports")
-    ap.add_argument("--force", action="store_true", help="忽略已有结果，强制重跑")
+    ap.add_argument("--force", action="store_true", help="忽略已有结果，强制重跑（连解析一起重跑）")
+    ap.add_argument("--force-eval", action="store_true",
+                    help="只重跑评估、复用已有解析（换配置/换模型做同口径对照时用）")
     ap.add_argument("--lock-timeout", type=int, default=15,
                     help="锁超时分钟数：超过它没更新的锁视为原 worker 已死，可被回收（kill 后立刻续跑可设 0）")
+    ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
+                    help="平台每分钟 token 配额（进程级排队，超过就等窗口滑过去）。0 = 关闭限速。实测 6 worker "
+                         "不限速时有 70/100 份关键阶段被 429 打死；L0 档限额约 50k TPM/模型")
     a = ap.parse_args()
 
     job = JobConfig.model_validate(json.load(open(a.job, encoding="utf-8")))
     repo = Repository(job.company_id)
     repo.upsert_job_config(job)
-    client = SiliconFlowClient(model=a.model, timeout=a.timeout) if a.model else SiliconFlowClient(timeout=a.timeout)
+    client = SiliconFlowClient(model=a.model, timeout=a.timeout, tpm=a.tpm) if a.model \
+        else SiliconFlowClient(timeout=a.timeout, tpm=a.tpm)
 
     # 开跑前探活：主干不可用就切降本档（把"白等 3×180s"变成一次 20s 探测）
+    # 注意：探活只能证明"端点活着"，证明不了"限流额度够用"——实测主干 122B 探活通过、
+    # 但跑批时约 20% 的调用被 429 拒。要做同口径对照就**显式 --model**，别让探活替你选。
     if a.cmd in ("run", "all") and not client.probe():
         if a.fallback_model and a.fallback_model != client.model:
             print(f"⚠️  主干 {client.model} 探活失败 → 自动切到 {a.fallback_model}")
             client.model = a.fallback_model
+    if a.cmd in ("run", "all"):
+        print(f"本次实际使用的模型：{client.model}")
 
     paths: list[str] = []
     for item in (a.resumes or []):
@@ -225,12 +263,16 @@ def main() -> int:
         print(f"当前状态机分布：{repo.progress(job)}")
 
     if a.cmd in ("run", "all"):
-        print(f"开跑：workers={a.workers} limit={a.limit or '不限'} model={a.model or '默认'}")
+        print(f"开跑：workers={a.workers} limit={a.limit or '不限'} model={a.model or '默认'} "
+              f"tpm={a.tpm or '不限速'}")
         stats = run(job, repo, client, workers=a.workers, limit=a.limit, model=a.model, force=a.force,
-                    lock_timeout_min=a.lock_timeout)
+                    force_eval=a.force_eval, lock_timeout_min=a.lock_timeout)
         print(f"本轮结束：{stats}")
         print(f"状态机分布：{repo.progress(job)}")
-        print(f"累计 API 调用：{client.calls}")
+        print(f"累计 API 调用：{client.calls} · 累计 token：{client.tokens} · 被 429 拒：{client.rate_limit_hits}")
+        if client.limiter:
+            print(f"限速器：{client.limiter.snapshot()}（waits=排队等配额次数）")
+
 
     if a.cmd in ("report", "all"):
         written = reports(job, repo, a.outdir)
@@ -241,6 +283,20 @@ def main() -> int:
     if a.cmd == "requeue-degraded":
         n = repo.requeue_degraded(job)
         print(f"已把 {n} 行『有关键阶段降级/失败』的重新入队 → 状态机分布：{repo.progress(job)}")
+        return 0
+
+    if a.cmd == "requeue-all":
+        n = repo.reset_all(job)
+        print(f"已把整批 {n} 行重新入队（解析结果保留，评估重跑）→ 状态机分布：{repo.progress(job)}")
+        return 0
+
+    if a.cmd == "requeue-model":
+        if not a.model:
+            print("requeue-model 需要 --model 指定要清理的模型（例如 --model Qwen/Qwen3.5-122B-A10B）")
+            return 2
+        n = repo.requeue_by_model(job, a.model)
+        print(f"已把 {n} 行『用过 {a.model} 跑评估』的重新入队 → 状态机分布：{repo.progress(job)}")
+        print(f"接着用同一条 run 命令（记得 --model 钉死目标模型 + --force-eval）重跑即可。")
         return 0
 
     if a.cmd == "retry":
