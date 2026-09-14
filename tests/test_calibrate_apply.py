@@ -106,8 +106,9 @@ def env():
 
 def test_apply_then_rollback(env) -> None:
     cfg, apps, cfg_path, tmp = env
-    # 夹具只有 3 条样本，证明不了 1% 漏放 → 这里把漏放预算放宽，专测"生效+回滚"这条链路
-    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.5)
+    # 夹具只有 3 条「该留」样本：0 漏放的置信上界也有 63%，所以这里把漏放预算放宽到 0.7，
+    # 专测"生效 + 回滚"这条链路；"样本不足时拒绝动线"由 test_leak_budget.py 单独盯着。
+    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
     assert res["status"] == "applied", res
     assert res["samples"]["separated"] is True
 
@@ -130,7 +131,7 @@ def test_apply_then_rollback(env) -> None:
 def test_insufficient_samples_never_moves_the_line(env) -> None:
     cfg, apps, cfg_path, tmp = env
     db.execute("DELETE FROM review_decision WHERE job_id = %s", (JOB_ID,))     # 把标注清空
-    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.5)
+    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
     assert res["status"] == "skipped" and "样本不足" in res["reason"]
     assert json.load(open(cfg_path, encoding="utf-8"))["scoring"]["pass_line"] == 60, "样本不足不许动线"
     assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback"
@@ -141,7 +142,7 @@ def test_stability_gate_blocks_calibration(env) -> None:
     from app.pipeline import stability
     cfg, apps, cfg_path, tmp = env
     db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
-    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.5)
+    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
     assert res["status"] == "skipped" and "稳定性未达标" in res["reason"], res
     assert json.load(open(cfg_path, encoding="utf-8"))["scoring"]["pass_line"] == 60
     assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback"
