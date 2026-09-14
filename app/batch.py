@@ -36,6 +36,7 @@ from .contracts.resume_parse import ResumeParse              # noqa: E402
 from .llm.client import DEFAULT_TPM, SiliconFlowClient        # noqa: E402
 from .pipeline.evaluate import evaluate                      # noqa: E402
 from .pipeline.parse import parse_resume                     # noqa: E402
+from .pipeline.rescore import rescore_batch                  # noqa: E402
 from .report import render_matrix, render_report             # noqa: E402
 from .store import Repository, db                            # noqa: E402
 
@@ -134,7 +135,7 @@ def process_one(row: dict, job: JobConfig, repo: Repository, client: SiliconFlow
         return out
     repo.save_evaluation(app_id, ev)
     repo.set_state(app_id, "evaluated")
-    out.update(state="evaluated", action=f"已评估：{ev.verdict}/{ev.decision} 分 {ev.base_total}")
+    out.update(state="evaluated", action=f"已评估：{ev.verdict}/{ev.decision} 判定分 {ev.gate_score}")
     return out
 
 
@@ -209,7 +210,7 @@ def reports(job: JobConfig, repo: Repository, outdir: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="简历初筛批处理（M0 闭环）")
     ap.add_argument("cmd", choices=["enqueue", "run", "report", "all", "status", "retry",
-                                    "requeue-degraded", "requeue-all", "requeue-model"])
+                                    "requeue-degraded", "requeue-all", "requeue-model", "rescore"])
     ap.add_argument("--job", default="config/job_secops.json")
     ap.add_argument("--resumes", nargs="*", default=None, help="简历文件/目录（目录会递归收集 pdf/docx/txt）")
     ap.add_argument("--workers", type=int, default=2, help="并发 worker 数（LLM 侧注意限流）")
@@ -225,6 +226,7 @@ def main() -> int:
                     help="只重跑评估、复用已有解析（换配置/换模型做同口径对照时用）")
     ap.add_argument("--lock-timeout", type=int, default=15,
                     help="锁超时分钟数：超过它没更新的锁视为原 worker 已死，可被回收（kill 后立刻续跑可设 0）")
+    ap.add_argument("--dry-run", action="store_true", help="只算不写库（rescore 用：先看回填会改多少处置）")
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="平台每分钟 token 配额（进程级排队，超过就等窗口滑过去）。0 = 关闭限速。实测 6 worker "
                          "不限速时有 70/100 份关键阶段被 429 打死；L0 档限额约 50k TPM/模型")
@@ -273,6 +275,13 @@ def main() -> int:
         print(f"累计 API 调用：{client.calls} · 累计 token：{client.tokens} · 被 429 拒：{client.rate_limit_hits}")
         if client.limiter:
             print(f"限速器：{client.limiter.snapshot()}（waits=排队等配额次数）")
+        print("回填本批分位（0 token）：", end="")
+        rescore_batch(job, apply=True, verbose=False)
+        print("完成 —— 判定分已按本批分位重算，处置同步更新")
+
+    if a.cmd == "rescore":
+        rescore_batch(job, apply=not a.dry_run, verbose=True)
+        return 0
 
 
     if a.cmd in ("report", "all"):
@@ -309,7 +318,8 @@ def main() -> int:
         print(f"状态机分布：{repo.progress(job)}")
         for r in repo.list_evaluations(job):
             print(f"  {r['file_name']:<28} {r.get('state'):<12} {r.get('verdict') or '-':<6} "
-                  f"{r.get('decision') or '-':<14} {r.get('base_total') if r.get('base_total') is not None else '-'}")
+                  f"{r.get('decision') or '-':<14} 判定分 {r.get('gate_score') if r.get('gate_score') is not None else '-'}"
+                  f" / 维度合计 {r.get('base_total') if r.get('base_total') is not None else '-'}")
     return 0
 
 

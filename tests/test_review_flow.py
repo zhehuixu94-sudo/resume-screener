@@ -61,10 +61,11 @@ def env():
         app_id = int(row["application_id"])
         db.execute(
             """INSERT INTO evaluation (application_id, resume_id, job_id, verdict, decision, base_total,
-                                       confidence, config_version, model_id, prompt_version, prompt_hash,
-                                       aggregation, pass_line, payload)
-               VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', 60, '{}'::jsonb)""",
-            (app_id, rid, JOB_ID, 20.0 + i * 5, VERSION))
+                                       gate_score, confidence, config_version, model_id, prompt_version,
+                                       prompt_hash, aggregation, pass_line, payload)
+               VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', 60,
+                       '{}'::jsonb)""",
+            (app_id, rid, JOB_ID, 20.0 + i * 5, 20.0 + i * 5, VERSION))
         apps.append({"application_id": app_id, "resume_id": rid, "file_path": path})
     yield cfg, apps, tmp
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
@@ -173,10 +174,11 @@ def test_stratified_draw_concentrates_on_near_band(env) -> None:
                             VALUES ('local', %s, %s, %s, 'evaluated') RETURNING application_id""",
                          (rid, JOB_ID, VERSION), returning=True)
         db.execute("""INSERT INTO evaluation (application_id, resume_id, job_id, verdict, decision, base_total,
-                                              confidence, config_version, model_id, prompt_version, prompt_hash,
-                                              aggregation, pass_line, payload)
-                      VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', %s, '{}'::jsonb)""",
-                   (int(row["application_id"]), rid, JOB_ID, float(sc), VERSION, line))
+                                              gate_score, confidence, config_version, model_id, prompt_version,
+                                              prompt_hash, aggregation, pass_line, payload)
+                      VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', %s,
+                              '{}'::jsonb)""",
+                   (int(row["application_id"]), rid, JOB_ID, float(sc), float(sc), VERSION, line))
         apps.append({"application_id": int(row["application_id"]), "resume_id": rid, "file_path": ""})
     out = review.draw(cfg, check_date="2026-02-01", archive_dir=tmp)
     assert out["strata_size"]["near"] == 6 and out["strata_size"]["far"] == 6

@@ -14,6 +14,7 @@ from ..store import db
 from .equal_split import equal_split_outcome
 from .hard_filters import check_hard_filters
 from .rules import bonus_layer, decide, rule_layer, sync_decisions_with_evidence
+from .score import dimensions_from_labeled, gate_score
 from .stability import apply_gate, latest as stability_latest
 
 
@@ -60,8 +61,13 @@ def _finish(cfg: JobConfig, outcome, *, gate: bool):
 
 
 def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
-                     reject_border_when_low: bool | None = None, *, gate: bool = True) -> str:
-    """按指定达标线重算处置（模型输出用库里存的，只有分数线在变）。"""
+                     reject_border_when_low: bool | None = None, *, gate: bool = True,
+                     bonus_rank: float | None = None) -> str:
+    """按指定达标线重算处置（模型输出用库里存的，只有分数线在变）。
+
+    分数走 `score.gate_score()`——与线上 `evaluate()` 同一个函数。**不要**在这里另算一套：
+    历史上"线上判定用旧口径、离线扫描用新口径"就是这么出现的，扫描出来的淘汰率与线上差 61 个百分点。
+    """
     parse, labeled, old = row["parse"], row["labeled"], row["old"]
     upd = {"pass_line": line, "band_width": band}
     if reject_border_when_low is not None:
@@ -72,7 +78,9 @@ def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
     bonus = bonus_layer(cfg2, parse, labeled)
     hard = check_hard_filters(cfg2, parse, old.llm_compare)
     anchored = {c.span_id: c.anchored for c in old.cited_evidence}
-    outcome = decide(cfg2, rules.base_total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
+    total, _ = gate_score(cfg2, dimensions_from_labeled(cfg2, labeled),
+                          [e.text for e in parse.evidence], bonus_rank=bonus_rank)
+    outcome = decide(cfg2, total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})
     outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions])

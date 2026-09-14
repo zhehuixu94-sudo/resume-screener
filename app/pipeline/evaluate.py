@@ -20,6 +20,7 @@ from ..contracts.evaluation import (
     EvalQuality,
     Evaluation,
     EvalStages,
+    ScoreParts,
     ScoringSnapshot,
 )
 from ..contracts.job_config import JobConfig
@@ -57,6 +58,7 @@ from ..llm.structured import call_structured
 from .cover import CoverOutcome, cover_dimensions
 from .hard_filters import check_hard_filters
 from .rules import RELEVANCE_W, DIFFICULTY_W, bonus_layer, decide, rule_layer, sync_decisions_with_evidence
+from .score import gate_score
 from .stability import apply_gate, latest as stability_latest
 
 
@@ -190,7 +192,14 @@ def questions_skip_reason(hard: list[HardFilterResult], compare_data: dict | Non
 
 
 def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, model: str | None = None,
-             eval_id: str | None = None, temperature: float = 0.0) -> tuple[Evaluation, list[str]]:
+             eval_id: str | None = None, temperature: float = 0.0,
+             bonus_rank: float | None = None) -> tuple[Evaluation, list[str]]:
+    """跑一份简历的完整评估。
+
+    `bonus_rank` = 这份简历在本批「加分项原始量」里的分位（0~1）：
+      · 单份评估（命令行/测试）拿不到整批 → None → 中性 0.5；
+      · 整批跑完后由 `app/pipeline/rescore.py` 回填真实分位并重算判定分。
+    """
     notes: list[str] = []
     flat = _flat_items(parse)
 
@@ -253,6 +262,13 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     rules = rule_layer(job, labeled)
     bonus = bonus_layer(job, parse, labeled, spans=pool)   # 匹配池只含简历原文+已锚定证据，模型的话不算（见 rules.bonus_layer）
 
+    # ---------------------------------------------------------- 判定分（新公式的唯一入口）
+    # ⚠️ 判定必须吃这个分。曾经这里的 decide() 用的是 rules.base_total（旧口径），
+    #    新公式只被写进 payload「供展示」——结果注水型 44 份并列同分、空话率 0.889 的简历拿 72.3 分。
+    #    rules.base_total 现在只用于报告与审计（维度分合计，不含加分项/扣分）。
+    gate_total, parts = gate_score(job, [d.model_dump(mode="json") for d in rules.dimensions],
+                                   [e.text for e in parse.evidence], bonus_rank=bonus_rank)
+
     stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
         stage_status["questions"] = q_res.status
@@ -280,7 +296,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                    anchored=sp.anchored, anchor_method=sp.anchoring.method))
     anchored_map = {c.span_id: c.anchored for c in cited}
 
-    outcome = decide(job, rules.base_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard,
+    outcome = decide(job, gate_total, compare_obj, fit_obj, stage_status, set(anchored_map), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
                      bonus_names={b.name for b in bonus})
     outcome = sync_decisions_with_evidence(outcome, anchored_map,
@@ -307,6 +323,8 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         hard_filters=outcome.hard_filters,
         dimensions=rules.dimensions,
         base_total=rules.base_total,
+        gate_score=gate_total,
+        score_parts=ScoreParts(**parts),
         bonus_hits=bonus, bonus_points=round(sum(b.points for b in bonus), 1),
         total_with_bonus=round(rules.base_total + sum(b.points for b in bonus), 1),
         unmapped_items=rules.unmapped,

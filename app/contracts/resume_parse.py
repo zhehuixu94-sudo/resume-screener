@@ -48,6 +48,8 @@ class ParseStats(Strict):
     achievements: int = 0
     achievements_anchored: int = 0
     achievements_evidence: int = 0
+    achievements_dropped: int = Field(default=0, ge=0,
+        description="被丢弃的『成就』条数：片段里没有任何数字/数量 → 不是量化成果（实测模型会把无数字的职责句塞进来）")
     blocks: int = Field(ge=0)
     items: int = Field(ge=0)
     evidence_total: int = Field(ge=0)
@@ -63,6 +65,11 @@ class Achievement(Strict):
     "发现并协助处理3处安全隐患；故障响应缩短至30分钟内；录入数据3000余条"
     这种分号拼接的量化长句切碎，只留下不含数字的短句——实测真实简历抽出的 7 条证据片段里
     **一个数字都没有**，而"具体性"信号完全依赖片段里有没有数字 → 输入被掏空。
+
+    **数量硬约束（误报防线）**：`text` 必须含数字/数量词，否则这条不属于"量化成就"
+    ——实测 2 份本来就没有量化成果的真实简历，模型硬凑出 5~7 条（"负责部员培训与组织交流会议"），
+    把无数字的职责句灌进"具体性"信号里。prompt 里写了硬要求，`parse.py` 里再做一次兜底剔除
+    （模型不遵守时丢进 `stats.achievements_dropped`，不静默通过）。
     """
     achievement_id: str = Field(min_length=1)
     text: str = Field(min_length=4)

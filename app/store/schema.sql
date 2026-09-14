@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS evaluation (
     organization_id  TEXT NOT NULL DEFAULT 'local',   -- 多租户预留，不做 RLS
     verdict          TEXT NOT NULL,              -- 达标 / 边缘 / 不达标
     decision         TEXT NOT NULL,              -- auto_pass / manual_review / auto_reject
-    base_total       REAL NOT NULL,
+    base_total       REAL NOT NULL,                 -- 规则层维度分合计（报告/审计用）
+    gate_score       REAL NOT NULL DEFAULT 0,       -- 判定用总分（基础60+加分40−注水扣分）；与达标线比较的是它
     confidence       REAL NOT NULL,
     config_version   TEXT NOT NULL,
     model_id         TEXT NOT NULL,
@@ -142,6 +143,15 @@ CREATE INDEX IF NOT EXISTS idx_chunk_resume ON resume_chunk (resume_id);
 
 -- 兼容早期建库：补列（幂等）
 ALTER TABLE resume ADD COLUMN IF NOT EXISTS file_path TEXT;
+-- 判定分独立成列：base_total 变成"维度分合计（报告用）"，判定与达标线比较的是 gate_score
+ALTER TABLE evaluation ADD COLUMN IF NOT EXISTS gate_score REAL NOT NULL DEFAULT 0;
+UPDATE evaluation SET gate_score = base_total WHERE gate_score = 0 AND base_total > 0;
+-- 老行的 payload 里没有 gate_score 字段（那是新公式写入的），契约会把它当 0 读——必须回填，
+-- 并诚实标注这些行"判定时用的是 base_total"（gate_score_field 是复现历史分数的关键参数）。
+UPDATE evaluation
+   SET payload = jsonb_set(jsonb_set(payload, '{gate_score}', to_jsonb(base_total)),
+                           '{scoring_snapshot,gate_score_field}', '"base_total"'::jsonb, true)
+ WHERE payload->>'gate_score' IS NULL AND base_total > 0;
 
 -- 兼容早期建库：evidence_span 的主键从 (span_id) 改成 (resume_id, span_id)
 DO $$

@@ -26,6 +26,7 @@ from app.llm.client import SiliconFlowClient  # noqa: E402
 from app.pipeline.evaluate import evaluate  # noqa: E402
 from app.pipeline.parse import parse_resume  # noqa: E402
 from app.pipeline.rules import decide, rule_layer, sync_decisions_with_evidence  # noqa: E402
+from app.pipeline.score import gate_score                                            # noqa: E402
 from app.pipeline.stability import record as stability_record                      # noqa: E402
 from app.pipeline.stability import status_text as stability_status_text            # noqa: E402
 from app.pipeline.hard_filters import check_hard_filters  # noqa: E402
@@ -55,10 +56,12 @@ def recount(ev: Evaluation, cfg: JobConfig, mode: str, parse) -> dict:
     rules = rule_layer(cfg, labeled, aggregation=mode)
     hard = check_hard_filters(cfg, parse, ev.llm_compare)
     anchored = {c.span_id: c.anchored for c in ev.cited_evidence}
-    out = decide(cfg, rules.base_total, ev.llm_compare, ev.fit, ev.stage_status, set(anchored), hard,
+    total, _parts = gate_score(cfg, [d.model_dump(mode='json') for d in rules.dimensions],
+                              [e.text for e in parse.evidence])
+    out = decide(cfg, total, ev.llm_compare, ev.fit, ev.stage_status, set(anchored), hard,
                  dim_points={d.id: d.points for d in rules.dimensions}, bonus_names=set())
     out = sync_decisions_with_evidence(out, anchored, [d.best_span_id or "" for d in rules.dimensions])
-    return {"total": rules.base_total, "verdict": out.verdict, "decision": out.decision,
+    return {"total": total, "verdict": out.verdict, "decision": out.decision,
             "dims": {d.id: d.points for d in rules.dimensions}}
 
 
@@ -111,14 +114,14 @@ def main() -> int:
                 cached_parse = outcome.parse
             ev, _ = evaluate(cached_parse, cfg, client, model=a.model)
             runs.append({"ev": ev, "parse": outcome.parse})
-            print(f"  第 {i} 次：{ev.verdict}/{ev.decision} 规则分 {ev.base_total} "
+            print(f"  第 {i} 次：{ev.verdict}/{ev.decision} 判定分 {ev.gate_score} "
                   f"｜置信度 {ev.confidence} ｜ 能力项 {len(ev.dimensions) and sum(len(d.items) for d in ev.dimensions)}")
         if not runs:
             continue
         entry = {"resume": name, "path": path, "runs": len(runs),
                  "verdicts": [r["ev"].verdict for r in runs],
                  "decisions": [r["ev"].decision for r in runs],
-                 "totals": [r["ev"].base_total for r in runs],
+                 "totals": [r["ev"].gate_score for r in runs],
                  "confidence": [r["ev"].confidence for r in runs],
                  "item_counts": [sum(len(d.items) for d in r["ev"].dimensions) for r in runs],
                  "modes": {}, "conflicts": [[c.type for c in r["ev"].conflicts] for r in runs]}

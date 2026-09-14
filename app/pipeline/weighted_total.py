@@ -14,10 +14,13 @@
 """
 from __future__ import annotations
 
-from .honesty import honesty_penalty
+from .honesty import fluff_penalty, honesty_penalty  # noqa: F401  (honesty_penalty 保留给旧调用/测试)
 
 BASE_BUDGET = 60.0          # 基础项满分
 BONUS_BUDGET = 40.0         # 加分项满分
+PENALTY_CAP = 30.0          # 注水扣分上限
+PENALTY_EXPONENT = 1.5      # 非线性指数（见 honesty.fluff_penalty）
+NEUTRAL_RANK = 0.5          # 单份（拿不到本批分位）时的中性加分位次
 
 
 def base_points(dimensions: list[dict], weights: dict[str, float],
@@ -69,6 +72,24 @@ def percentile_rank(raw: dict[str, float]) -> dict[str, float]:
     return out
 
 
+def penalty_points(signals: dict, *, cap: float = PENALTY_CAP,
+                   exponent: float = PENALTY_EXPONENT) -> float:
+    """注水扣分（非线性，见 honesty.fluff_penalty）。"""
+    return fluff_penalty(signals or {}, cap=cap, exponent=exponent)
+
+
+def rank_key(total: float, signals: dict, key: str) -> tuple:
+    """排序键（含二级、三级）：**总分 → 具体性 → 空话率 → 标识**。
+
+    为什么需要它（实测）：基础项是量化的（权重×相关档），一批注水型简历会算出**完全相同**的
+    基础分——实测 300 份里 44 份并列在同一个分数上，这一段等于没有名次。
+    并列时看「证据说不说得清」：具体性高者在前；再并列看空话率低的在前；最后用 key 兜底保证**确定性**
+    （同一批数据每次排序结果一致，否则等于按文件名发排名）。
+    """
+    return (-round(float(total), 2), -float(signals.get("concreteness", 0.0) or 0.0),
+            float(signals.get("fluff_rate", 0.0) or 0.0), str(key))
+
+
 def total_score(base: float, rank01: float, penalty: float, *,
                 bonus_budget: float = BONUS_BUDGET) -> float:
     """总分 = 基础项 + 加分项 − 注水扣分（下界 0，上界 100）。"""
@@ -76,11 +97,11 @@ def total_score(base: float, rank01: float, penalty: float, *,
 
 
 def score_batch(resumes: list[dict], weights: dict[str, float], *,
-                honesty_signals: dict[str, dict] | None = None, penalty_cap: float = 30.0,
-                penalty_signal: str = "fluff") -> dict[str, dict]:
+                honesty_signals: dict[str, dict] | None = None, penalty_cap: float = PENALTY_CAP,
+                penalty_exponent: float = PENALTY_EXPONENT) -> dict[str, dict]:
     """一次算一批：resumes = [{"key":..., "dimensions":[...]}]，返回 {key: {...拆解...}}。
 
-    分成一批算是必须的——加分项用的是本批分位。
+    分成一批算是必须的——加分项用的是本批分位。扣分用**非线性**（honesty.fluff_penalty）。
     """
     raw = {r["key"]: bonus_raw(r["dimensions"]) for r in resumes}
     rank = percentile_rank(raw)
@@ -88,14 +109,14 @@ def score_batch(resumes: list[dict], weights: dict[str, float], *,
     for r in resumes:
         k = r["key"]
         b = base_points(r["dimensions"], weights)
-        pen = honesty_penalty(honesty_signals.get(k, {}), cap=penalty_cap, signal=penalty_signal) \
-            if honesty_signals else 0.0
+        sig = (honesty_signals or {}).get(k, {})
+        pen = penalty_points(sig, cap=penalty_cap, exponent=penalty_exponent) if honesty_signals else 0.0
         out[k] = {
             "base": b,
             "bonus_raw": round(raw[k], 3),
             "rank01": round(rank[k], 4),
             "bonus": round(BONUS_BUDGET * rank[k], 2),
             "penalty": round(pen, 2),
-            "total": total_score(b, rank[k], pen),
+            "total": total_score(b, rank[k], pen, bonus_budget=BONUS_BUDGET),
         }
     return out

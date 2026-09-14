@@ -772,6 +772,92 @@
       "title": "Question",
       "type": "object"
     },
+    "ScoreParts": {
+      "additionalProperties": false,
+      "description": "判定分的拆解（基础项 / 加分项 / 注水扣分）——报告要能逐项解释，否则 HR 不会信。\n\n`rank01` 是**本批分位**（加分项用相对位次而不是绝对值）：单份评估时是中性 0.5，\n整批跑完由 `app/pipeline/rescore.py` 回填真实位次并重算总分。",
+      "properties": {
+        "base": {
+          "description": "基础项：Σ 维度权重 × 该维度最强相关度（满分 60）",
+          "maximum": 60.0,
+          "minimum": 0.0,
+          "title": "Base",
+          "type": "number"
+        },
+        "bonus_raw": {
+          "description": "加分项原始量：Σ 相关度 × 难度（不截断）",
+          "minimum": 0.0,
+          "title": "Bonus Raw",
+          "type": "number"
+        },
+        "rank01": {
+          "description": "本批分位；单份评估时 0.5",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Rank01",
+          "type": "number"
+        },
+        "bonus": {
+          "description": "加分项得分 = 40 × rank01",
+          "maximum": 40.0,
+          "minimum": 0.0,
+          "title": "Bonus",
+          "type": "number"
+        },
+        "penalty": {
+          "description": "注水扣分 = 30 × 空话率^指数",
+          "maximum": 30.0,
+          "minimum": 0.0,
+          "title": "Penalty",
+          "type": "number"
+        },
+        "penalty_exponent": {
+          "default": 1.5,
+          "description": "扣分非线性指数",
+          "minimum": 0.0,
+          "title": "Penalty Exponent",
+          "type": "number"
+        },
+        "fluff_rate": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Fluff Rate",
+          "type": "number"
+        },
+        "concreteness": {
+          "description": "证据具体性（数字/时间/机构/成果四要素）",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Concreteness",
+          "type": "number"
+        },
+        "n_spans": {
+          "description": "参与信号统计的证据片段数",
+          "minimum": 0,
+          "title": "N Spans",
+          "type": "integer"
+        },
+        "total": {
+          "description": "判定用总分 = base + bonus − penalty",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Total",
+          "type": "number"
+        }
+      },
+      "required": [
+        "base",
+        "bonus_raw",
+        "rank01",
+        "bonus",
+        "penalty",
+        "fluff_rate",
+        "concreteness",
+        "n_spans",
+        "total"
+      ],
+      "title": "ScoreParts",
+      "type": "object"
+    },
     "ScoringSnapshot": {
       "additionalProperties": false,
       "description": "这一行的分数是怎么算出来的（复现历史分数的全部参数）。",
@@ -819,8 +905,11 @@
           "type": "string"
         },
         "gate_score_field": {
-          "const": "base_total",
-          "default": "base_total",
+          "default": "gate_score",
+          "enum": [
+            "base_total",
+            "gate_score"
+          ],
           "title": "Gate Score Field",
           "type": "string"
         }
@@ -1149,10 +1238,30 @@
       "type": "array"
     },
     "base_total": {
-      "description": "规则层总分（不含加分项）；与达标线比较的就是它",
+      "description": "规则层维度分合计（不含加分项/扣分）；用于报告与审计",
       "minimum": 0.0,
       "title": "Base Total",
       "type": "number"
+    },
+    "gate_score": {
+      "default": 0.0,
+      "description": "**判定用总分**：基础项60 + 加分项40 − 注水扣分；与达标线比较的是它",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "title": "Gate Score",
+      "type": "number"
+    },
+    "score_parts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScoreParts"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "判定分拆解（基础/加分/扣分）"
     },
     "bonus_hits": {
       "items": {
@@ -1169,7 +1278,7 @@
     },
     "total_with_bonus": {
       "default": 0.0,
-      "description": "仅供展示，不参与判定",
+      "description": "展示用：旧口径 base_total + 关键词加分（**不参与判定**）",
       "minimum": 0.0,
       "title": "Total With Bonus",
       "type": "number"

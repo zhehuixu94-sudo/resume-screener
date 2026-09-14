@@ -82,6 +82,22 @@ def honesty_penalty(signals: dict, *, cap: float = 30.0, signal: str = "fluff") 
     return max(0.0, min(1.0, f)) * cap
 
 
+def fluff_penalty(signals: dict, *, cap: float = 30.0, exponent: float = 1.5) -> float:
+    """**非线性**注水扣分：cap × 空话率^exponent。
+
+    为什么指数 >1（实测定的，见 out/weighted_sweep.py，300 份对照语料）：
+      · 指数越大扣得越轻，但**低空话被扣得更少**——真实简历空话率 p90 = 0.29：
+        指数 1.0 → 扣 8.8 分（误伤），1.5 → 4.8 分，2.0 → 2.6 分；
+      · 指数越大，四档间距越小：明显合格−注水 = 29.6(1.0) / 27.1(1.5) / 24.4(2.0)；
+      · 约束「真实简历扣分 ≤5 分」下取最大间距 → **1.5**。
+    指数 <1（凹）虽然间距更大（0.75 → 30.2），但对低空话也重罚（0.29 → 12.0 分），
+    等于拿真人简历的措辞风格开刀，不采纳。
+    扣分曲线不影响"四档降序"这个结论（0.75~2.0 全部排正）——真正治病的是**把扣分接进判定**。
+    """
+    f = max(0.0, min(1.0, float(signals.get("fluff_rate", 1.0) or 0.0)))
+    return round(cap * (f ** exponent), 2)
+
+
 def is_high_confidence_fluff(signals: dict, *, min_spans: int = 8, fluff_at: float = 0.8,
                              number_at: float = 0.0) -> bool:
     """高置信注水：可以直接淘汰的那一档（比"扣分"更狠，必须苛刻，否则误杀）。

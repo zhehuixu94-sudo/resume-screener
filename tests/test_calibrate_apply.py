@@ -78,10 +78,10 @@ def env():
         app_id = int(row["application_id"])
         db.execute(
             """INSERT INTO evaluation (application_id, resume_id, job_id, verdict, decision, base_total,
-                                       confidence, config_version, model_id, prompt_version, prompt_hash,
-                                       aggregation, pass_line, payload)
-               VALUES (%s, %s, %s, '边缘', 'manual_review', %s, 0.8, '1', 'fake', 'p1', 'h1', 'best', 60, %s)""",
-            (app_id, rid, JOB_ID, float(score), json.dumps(payload, ensure_ascii=False)))
+                                       gate_score, confidence, config_version, model_id, prompt_version,
+                                       prompt_hash, aggregation, pass_line, payload)
+               VALUES (%s, %s, %s, '边缘', 'manual_review', %s, %s, 0.8, '1', 'fake', 'p1', 'h1', 'best', 60, %s)""",
+            (app_id, rid, JOB_ID, float(score), float(score), json.dumps(payload, ensure_ascii=False)))
         apps.append({"application_id": app_id, "resume_id": rid, "label": "pass" if i < 3 else "reject"})
 
     from app.pipeline import stability                  # 校准生效的前提：稳定性已达标

@@ -46,7 +46,7 @@ def main() -> int:
         print(f"{cfg.job_id}@{(a.from_version or cfg.config_version)} 没有可用的评估结果（先跑一遍 run）")
         return 1
 
-    scores = sorted(float(r["old"].base_total) for r in rows)
+    scores = sorted(float(r["old"].gate_score) for r in rows)
     n = len(scores)
     import statistics as st
     print(f"=== 达标线扫描：{cfg.job_title}（{cfg.job_id} v{cfg.config_version} 配置 × "

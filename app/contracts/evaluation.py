@@ -150,7 +150,26 @@ class ScoringSnapshot(Strict):
     reject_threshold: float = Field(description="pass_line - band_width：< 它且整体不达标 → 自动淘汰")
     confidence_floor: float
     config_version: str
-    gate_score_field: Literal["base_total"] = "base_total"
+    gate_score_field: Literal["base_total", "gate_score"] = "gate_score"
+
+
+class ScoreParts(Strict):
+    """判定分的拆解（基础项 / 加分项 / 注水扣分）——报告要能逐项解释，否则 HR 不会信。
+
+    `rank01` 是**本批分位**（加分项用相对位次而不是绝对值）：单份评估时是中性 0.5，
+    整批跑完由 `app/pipeline/rescore.py` 回填真实位次并重算总分。
+    """
+
+    base: float = Field(ge=0.0, le=60.0, description="基础项：Σ 维度权重 × 该维度最强相关度（满分 60）")
+    bonus_raw: float = Field(ge=0.0, description="加分项原始量：Σ 相关度 × 难度（不截断）")
+    rank01: float = Field(ge=0.0, le=1.0, description="本批分位；单份评估时 0.5")
+    bonus: float = Field(ge=0.0, le=40.0, description="加分项得分 = 40 × rank01")
+    penalty: float = Field(ge=0.0, le=30.0, description="注水扣分 = 30 × 空话率^指数")
+    penalty_exponent: float = Field(default=1.5, ge=0.0, description="扣分非线性指数")
+    fluff_rate: float = Field(ge=0.0, le=1.0)
+    concreteness: float = Field(ge=0.0, le=1.0, description="证据具体性（数字/时间/机构/成果四要素）")
+    n_spans: int = Field(ge=0, description="参与信号统计的证据片段数")
+    total: float = Field(ge=0.0, le=100.0, description="判定用总分 = base + bonus − penalty")
 
 
 class LabelingMeta(Strict):
@@ -200,10 +219,14 @@ class Evaluation(Strict):
     dimensions: list[DimensionScore] = Field(min_length=1)
     coverage: list[DimensionCoverage] = Field(default_factory=list,
                                               description="按维度定向取证：found=false 即该维度无证据")
-    base_total: float = Field(ge=0.0, description="规则层总分（不含加分项）；与达标线比较的就是它")
+    base_total: float = Field(ge=0.0, description="规则层维度分合计（不含加分项/扣分）；用于报告与审计")
+    gate_score: float = Field(default=0.0, ge=0.0, le=100.0,
+                              description="**判定用总分**：基础项60 + 加分项40 − 注水扣分；与达标线比较的是它")
+    score_parts: ScoreParts | None = Field(default=None, description="判定分拆解（基础/加分/扣分）")
     bonus_hits: list[BonusHit] = Field(default_factory=list)
     bonus_points: float = Field(default=0.0, ge=0.0)
-    total_with_bonus: float = Field(default=0.0, ge=0.0, description="仅供展示，不参与判定")
+    total_with_bonus: float = Field(default=0.0, ge=0.0,
+                                    description="展示用：旧口径 base_total + 关键词加分（**不参与判定**）")
     unmapped_items: list[UnmappedItem] = Field(default_factory=list)
     fit: LlmFitOutput | None = Field(default=None, description="匹配度：技能画像 vs 岗位方向")
 

@@ -23,6 +23,7 @@ from .evaluation import (
     EvalStages,
     HardFilterResult,
     LabelingMeta,
+    ScoreParts,
     ScoringSnapshot,
     UnmappedItem,
 )

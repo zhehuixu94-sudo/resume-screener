@@ -166,7 +166,7 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
 <div class=sub>岗位：{esc(ev.job_id)}（配置 {esc(ev.job_config_version)}）｜ 评估 {esc(ev.eval_id)}｜ 模型 {esc(ev.model_id)}｜ prompt {esc(ev.prompt_version)}｜ {esc(ev.created_at)}</div>
 <div class=card>
   <div class=big style="color:{VERDICT_COLOR.get(ev.verdict, '#555')}">{esc(ev.verdict)} · {esc(DECISION_CN.get(ev.decision, ev.decision))}</div>
-  <div class=sub>规则总分 <b>{ev.base_total:.1f}</b> / 达标线 {ev.scoring_snapshot.pass_line:.0f} ±{ev.scoring_snapshot.band_width:.0f}
+  <div class=sub>判定分 <b>{ev.gate_score:.1f}</b>（维度合计 {ev.base_total:.1f}） / 达标线 {ev.scoring_snapshot.pass_line:.0f} ±{ev.scoring_snapshot.band_width:.0f}
    ｜ 维度聚合 {esc(ev.scoring_snapshot.aggregation)} ｜ 置信度 {ev.confidence:.2f} ｜ 引用证据 {len(ev.cited_evidence)} 条
    ｜ 解析质量门禁 {'通过' if ev.quality.gate_passed else '未通过'} ｜ 证据覆盖率 {ev.quality.evidence_coverage*100:.0f}%
    ｜ 标注 {('单次' if ev.labeling.method == 'single' else f'{ev.labeling.repeats} 次取中位数·维度一致率 {ev.labeling.dimension_agreement_mean}')}</div>
@@ -216,7 +216,7 @@ def render_report(parse: ResumeParse, ev: Evaluation, *, title: str = "简历初
 def render_matrix(rows: list[dict], *, job_title: str) -> str:
     """批次矩阵：一行一份简历，按规则总分排序，可点进单人报告。"""
     def row_html(r):
-        total = r.get("base_total")
+        total = r.get("gate_score")
         total_s = f"{float(total):.1f}" if total is not None else ""
         decision = r.get("decision") or "—"
         color = VERDICT_COLOR.get(r.get("verdict") or "", "#555")

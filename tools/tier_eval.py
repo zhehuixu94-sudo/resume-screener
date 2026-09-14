@@ -38,7 +38,7 @@ def fetch(cfg: JobConfig, corpus: str) -> list[dict]:
     manifest = json.load(open(os.path.join(corpus, "manifest.json"), encoding="utf-8"))
     tier = {m["file"]: m["tier"] for m in manifest}
     rows = db.fetch_all(
-        """SELECT r.file_name, e.verdict, e.decision, e.base_total, e.confidence
+        """SELECT r.file_name, e.verdict, e.decision, e.gate_score, e.base_total, e.confidence
              FROM evaluation e JOIN application a USING(application_id)
              JOIN resume r ON r.resume_id = e.resume_id
             WHERE a.job_id = %s AND a.config_version = %s""",
@@ -79,7 +79,7 @@ def main() -> int:
         if not sub:
             continue
         c = collections.Counter(r["decision"] for r in sub)
-        s = sorted(float(r["base_total"]) for r in sub)
+        s = sorted(float(r["gate_score"]) for r in sub)
         q = lambda p: s[max(0, min(len(s) - 1, int(p * len(s))))]      # noqa: E731
         print(f"{CN[t]:<10}{len(sub):>5}{c['auto_pass']:>6}{c['manual_review']:>8}{c['auto_reject']:>6}"
               f"{c['auto_reject'] / len(sub) * 100:>7.1f}%  {st.median(s):.1f} / {q(.25):.1f}~{q(.75):.1f}")

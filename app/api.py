@@ -133,7 +133,8 @@ def create_app() -> FastAPI:
             out.append({
                 "application_id": r["application_id"], "file_name": r["file_name"], "resume_id": r["resume_id"],
                 "state": r["state"], "verdict": r.get("verdict"), "decision": r.get("decision"),
-                "base_total": r.get("base_total"), "confidence": r.get("confidence"),
+                "gate_score": r.get("gate_score"), "base_total": r.get("base_total"),
+                "confidence": r.get("confidence"),
                 "attempts": r.get("attempts"), "last_error": r.get("last_error") or "",
                 "decision_reason": ev.get("decision_reason", ""),
                 "conflicts": [c.get("type") for c in (ev.get("conflicts") or [])],

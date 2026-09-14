@@ -19,6 +19,7 @@ from ..llm.client import SiliconFlowClient
 from ..llm.coercers import coerce_parse
 from ..llm.prompts import PROMPT_VERSION, SYS_PARSE, TPL_PARSE, hash_of
 from ..llm.structured import StructuredResult, call_structured
+from .honesty import NUM
 from ..text.anchor import anchor
 from ..text.extract import extract
 from ..text.normalize import Normalized, normalize, page_offsets
@@ -89,8 +90,16 @@ def parse_resume(path: str, job: JobConfig, client: SiliconFlowClient, *, model:
         blocks.append(Block(block_id=bid, section=b.section, title=b.title, period=b.period, item_ids=item_ids))
 
     # —— 量化成就：单独锚定，并镜像到 evidence（item_id 用哨兵 __ach__，便于信号按同样口径读表）
+    #    ⚠️ 代码兜底：**没有数字/数量的条目不是"量化成就"**，一律剔除。
+    #    实测 2 份没有量化成果的真实简历，模型硬凑出 5~7 条纯职责句（"负责部员培训与组织交流会议"）——
+    #    它们不含数字，进池后只会稀释"具体性/空话率"信号。prompt 写了硬要求，这里不信任它。
     achievements: list[Achievement] = []
-    for ai, a in enumerate(getattr(result.obj, "achievements", []) or [], start=1):
+    dropped = 0
+    for a in getattr(result.obj, "achievements", []) or []:
+        if not NUM.search(a.text or ""):
+            dropped += 1
+            continue
+        ai = len(achievements) + 1
         aa = anchor(a.text, norm)
         sp = aa.span
         raw = None
@@ -114,6 +123,7 @@ def parse_resume(path: str, job: JobConfig, client: SiliconFlowClient, *, model:
                        evidence_anchored=anchored, evidence_unanchored=len(item_evidence) - anchored,
                        evidence_coverage=round(anchored / max(1, len(items)), 3),
                        achievements=len(achievements),
+                       achievements_dropped=dropped,
                        achievements_anchored=sum(1 for a in achievements if a.anchored),
                        achievements_evidence=len(ach_evidence))
 

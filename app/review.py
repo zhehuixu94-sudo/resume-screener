@@ -68,7 +68,7 @@ def strata_of(score: float, line: float, band: float) -> str:
 
 # ---------------------------------------------------------------- 池子
 POOL_SQL = """
-SELECT a.application_id, a.resume_id, r.file_name, r.file_path, e.base_total, e.verdict, e.decision,
+SELECT a.application_id, a.resume_id, r.file_name, r.file_path, e.gate_score, e.verdict, e.decision,
        EXISTS (SELECT 1 FROM spot_check_item i
                 WHERE i.application_id = a.application_id AND i.state IN ('pending', 'passed', 'rejected'))
          AS drawn_before,
@@ -79,7 +79,7 @@ SELECT a.application_id, a.resume_id, r.file_name, r.file_path, e.base_total, e.
   JOIN resume r ON r.resume_id = a.resume_id
  WHERE a.company_id = %s AND a.job_id = %s AND a.config_version = %s
    AND e.decision = 'auto_reject'
- ORDER BY e.base_total ASC, random()
+ ORDER BY e.gate_score ASC, random()
 """
 
 
@@ -112,7 +112,7 @@ def _pick_stratified(rows: list[dict], cfg: JobConfig, want: int | None) -> tupl
     line, band = float(cfg.scoring.pass_line), float(cfg.scoring.band_width)
     buckets: dict[str, list[dict]] = {"near": [], "mid": [], "far": []}
     for r in rows:
-        buckets[strata_of(float(r["base_total"]), line, band)].append(r)
+        buckets[strata_of(float(r["gate_score"]), line, band)].append(r)
     total = sum(len(v) for v in buckets.values())
     ratio = {k: v for k, v in zip(("near", "mid", "far"), STRATUM_RATIOS)}
     quota = {k: int(len(buckets[k]) * ratio[k]) for k in buckets}
@@ -179,7 +179,7 @@ def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = No
                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                ON CONFLICT (batch_id, application_id) DO NOTHING""",
             (batch_id, r["application_id"], r["resume_id"], cfg.job_id, cfg.config_version, day,
-             r["base_total"]))
+             r["gate_score"]))
 
     Repository(cfg.company_id).audit("spot_check_draw", "job", f"{cfg.job_id}@{cfg.config_version}",
                                      {"date": day, "drawn": len(picked), "pool": len(rows), "want": want,
@@ -188,8 +188,8 @@ def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = No
             "strata_size": info.get("strata_size", {}), "strata_quota": info.get("strata_quota", {}),
             "expired_prev": int((expired or {}).get("n", 0)),
             "items": [{"application_id": r["application_id"], "file_name": r["file_name"],
-                       "score": r["base_total"],
-                       "stratum": strata_of(float(r["base_total"]), float(cfg.scoring.pass_line),
+                       "score": r["gate_score"],
+                       "stratum": strata_of(float(r["gate_score"]), float(cfg.scoring.pass_line),
                                             float(cfg.scoring.band_width))} for r in picked]}
 
 
@@ -206,7 +206,7 @@ def listing(cfg: JobConfig, *, check_date: str | None = None) -> list[dict]:
         return []
     return db.fetch_all(
         """SELECT i.item_id, i.application_id, i.state, i.score, i.check_date,
-                  r.file_name, e.verdict, e.decision, e.base_total,
+                  r.file_name, e.verdict, e.decision, e.gate_score,
                   d.action AS hr_action, d.note AS hr_note
              FROM spot_check_item i
              JOIN resume r ON r.resume_id = i.resume_id
@@ -248,7 +248,7 @@ def review(cfg: JobConfig, application_id: int, action: str, *, note: str = "", 
     if action not in ("pass", "reject"):
         raise SystemExit("action 只能是 pass / reject")
     row = db.fetch_one(
-        """SELECT a.application_id, a.resume_id, e.decision, e.base_total FROM application a
+        """SELECT a.application_id, a.resume_id, e.decision, e.gate_score FROM application a
              LEFT JOIN evaluation e ON e.application_id = a.application_id
             WHERE a.application_id = %s""", (application_id,))
     if not row:
@@ -354,7 +354,7 @@ def main() -> int:
         rows = pool(cfg)
         print(f"自动淘汰库（池子）共 {len(rows)} 份 · 岗位 {cfg.job_id}@{cfg.config_version}")
         for r in rows:
-            print(f"  app={r['application_id']:<5} {r['file_name']:<20} 分 {r['base_total']:>5} "
+            print(f"  app={r['application_id']:<5} {r['file_name']:<20} 分 {r['gate_score']:>5} "
                   f"{'（曾抽过没人看）' if r['drawn_before'] else ''}")
         print(f"\n（人工淘汰库 {len(manual_reject_library(cfg))} 份：`{sys.argv[0]} library` 查看）")
         return 0
@@ -396,7 +396,7 @@ def main() -> int:
         print(f"抽检清单（{rows[0]['check_date']}）：")
         for r in rows:
             mark = {"pending": "待看", "passed": "已判通过", "rejected": "已判淘汰"}.get(r["state"], r["state"])
-            print(f"  app={r['application_id']:<5} {r['file_name']:<20} 分 {r['base_total']:>5} "
+            print(f"  app={r['application_id']:<5} {r['file_name']:<20} 分 {r['gate_score']:>5} "
                   f"系统判 {r['decision']:<12} → {mark} {r['hr_note'] or ''}")
         return 0
 

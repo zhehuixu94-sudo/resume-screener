@@ -100,8 +100,30 @@ def test_score_batch_end_to_end() -> None:
                       honesty_signals={"g": {"fluff_rate": 0.1, "n_spans": 10},
                                        "f": {"fluff_rate": 0.9, "n_spans": 10}}, penalty_cap=30)
     assert res["g"]["bonus_raw"] == res["f"]["bonus_raw"]           # 打分相同
-    assert res["g"]["penalty"] == 3.0 and res["f"]["penalty"] == 27.0
+    # 扣分是**非线性**的：30 × 空话率^1.5
+    assert res["g"]["penalty"] == round(30 * 0.1 ** 1.5, 2)
+    assert res["f"]["penalty"] == round(30 * 0.9 ** 1.5, 2)
     assert res["g"]["total"] > res["f"]["total"]                    # 靠注水扣分拉开
+
+
+def test_nonlinear_penalty_shape_is_measured_not_guessed() -> None:
+    """非线性扣分的方向与取值，按 300 份对照语料实测（out/weighted_sweep.py）钉死。
+
+    指数 >1 ⇒ 每单位空话率的代价随空话率上升（低空话便宜、高空话贵），这正是我们要的方向：
+      · 真实简历（空话率 p90 = 0.29）扣分 ≤5 分，不许拿措辞风格开刀；
+      · 注水型（空话率 p50 = 0.62）实打实扣十几分。
+    指数 <1 会把这两条都破坏（0.29 就要扣 12 分），所以固定 ≥1。
+    """
+    from app.pipeline.honesty import fluff_penalty
+    real_p90, fluff_p50 = 0.29, 0.62
+    assert fluff_penalty({"fluff_rate": real_p90}, cap=30) <= 5.0        # 不误伤真人
+    assert fluff_penalty({"fluff_rate": fluff_p50}, cap=30) >= 12.0      # 注水型真被扣
+    # 每单位代价递增（非线性，而不是按比例平摊）
+    unit_low = fluff_penalty({"fluff_rate": 0.1}, cap=30) / 0.1
+    unit_high = fluff_penalty({"fluff_rate": 0.9}, cap=30) / 0.9
+    assert unit_high > unit_low
+    assert fluff_penalty({"fluff_rate": 2.0}, cap=30) == 30.0            # 越界夹住
+    assert fluff_penalty({"fluff_rate": 0.0}, cap=30) == 0.0
 
 
 # ————— 分位口径（真实数据标定用：绝对阈值是拿构造语料定的，搬到真实数据会错位）—————

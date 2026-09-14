@@ -81,11 +81,11 @@ def sweep(cfg: JobConfig, rows_by_resume: dict[str, dict], pos_ids: set[str], ne
         return {"candidates": [], "samples": [], "separated": False,
                 "pos_scores": [], "neg_scores": []}
 
-    scores = [float(r["old"].base_total) for r, _ in samples]
+    scores = [float(r["old"].gate_score) for r, _ in samples]
     lo = max(0.0, min(scores) - LINE_SPAN)          # 线不能是负数（挑出过 -5.8 这种没意义的线）
     hi = max(scores) + LINE_SPAN
-    pos_scores = sorted(float(r["old"].base_total) for r, lab in samples if lab == "pos")
-    neg_scores = sorted(float(r["old"].base_total) for r, lab in samples if lab == "neg")
+    pos_scores = sorted(float(r["old"].gate_score) for r, lab in samples if lab == "pos")
+    neg_scores = sorted(float(r["old"].gate_score) for r, lab in samples if lab == "neg")
     separated = bool(pos_scores and neg_scores and max(neg_scores) < min(pos_scores))
 
     counts: list[dict] = []
@@ -235,7 +235,7 @@ def run(job_path: str, *, trigger: str = "manual", band: float | None = None,
 
 def _score_of(rows_by_resume: dict[str, dict], resume_id: str) -> float | None:
     row = rows_by_resume.get(resume_id)
-    return float(row["old"].base_total) if row else None
+    return float(row["old"].gate_score) if row else None
 
 
 def rollback(job_path: str) -> dict:

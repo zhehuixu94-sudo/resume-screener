@@ -115,21 +115,23 @@ class Repository:
     def save_evaluation(self, application_id: int, ev: Evaluation) -> None:
         db.execute(
             """INSERT INTO evaluation (application_id, resume_id, job_id, organization_id, verdict, decision,
-                                       base_total, confidence, config_version, model_id, prompt_version,
+                                       base_total, gate_score, confidence, config_version, model_id, prompt_version,
                                        prompt_hash, aggregation, pass_line, payload)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (application_id) DO UPDATE
                  SET verdict = EXCLUDED.verdict, decision = EXCLUDED.decision, base_total = EXCLUDED.base_total,
+                     gate_score = EXCLUDED.gate_score,
                      confidence = EXCLUDED.confidence, model_id = EXCLUDED.model_id,
                      prompt_version = EXCLUDED.prompt_version, prompt_hash = EXCLUDED.prompt_hash,
                      aggregation = EXCLUDED.aggregation, pass_line = EXCLUDED.pass_line,
                      payload = EXCLUDED.payload, created_at = now()""",
             (application_id, ev.resume_id, ev.job_id, self.company_id, ev.verdict, ev.decision,
-             ev.base_total, ev.confidence, ev.job_config_version, ev.model_id, ev.prompt_version,
+             ev.base_total, ev.gate_score, ev.confidence, ev.job_config_version, ev.model_id, ev.prompt_version,
              ev.stages.compare.prompt_hash, ev.scoring_snapshot.aggregation, ev.scoring_snapshot.pass_line,
              json.dumps(ev.model_dump(mode="json"), ensure_ascii=False)))
         self.audit("save_evaluation", "application", str(application_id),
-                   {"verdict": ev.verdict, "decision": ev.decision, "base_total": ev.base_total},
+                   {"verdict": ev.verdict, "decision": ev.decision, "gate_score": ev.gate_score,
+                    "base_total": ev.base_total},
                    ev.stages.compare.trace_ids[-1:])
 
     # ------------------------------------------------------------ 状态机
@@ -281,8 +283,8 @@ class Repository:
         return {r["state"]: int(r["n"]) for r in rows}
 
     def list_evaluations(self, cfg: JobConfig, decision: str | None = None) -> list[dict]:
-        sql = """SELECT a.application_id, a.state, e.verdict, e.decision, e.base_total, e.confidence,
-                        e.payload, r.file_name, r.resume_id, a.attempts, a.last_error
+        sql = """SELECT a.application_id, a.state, e.verdict, e.decision, e.gate_score, e.base_total,
+                        e.confidence, e.payload, r.file_name, r.resume_id, a.attempts, a.last_error
                    FROM application a
                    JOIN resume r ON r.resume_id = a.resume_id
                    LEFT JOIN evaluation e ON e.application_id = a.application_id
@@ -291,7 +293,7 @@ class Repository:
         if decision:
             sql += " AND e.decision = %s"
             params.append(decision)
-        sql += " ORDER BY e.base_total DESC NULLS LAST, r.file_name"
+        sql += " ORDER BY e.gate_score DESC NULLS LAST, r.file_name"
         return db.fetch_all(sql, params)
 
     # ------------------------------------------------------------ 审计
