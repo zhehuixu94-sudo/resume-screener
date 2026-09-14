@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from .contracts import JobConfig                              # noqa: E402
 from .pipeline.replay import decide_with_line, load_rows      # noqa: E402
 from .pipeline.stability import is_ok as stability_is_ok       # noqa: E402
+from .pipeline.stats import choose_line_within_budget          # noqa: E402
 from .pipeline.stability import latest as stability_latest     # noqa: E402
 from .store import Repository, db                             # noqa: E402
 
@@ -141,7 +142,7 @@ def config_patch(path: str, *, pass_line: float, config_version: str, source: st
 
 # ---------------------------------------------------------------- 校准
 def run(job_path: str, *, trigger: str = "manual", band: float | None = None,
-        dry_run: bool = False) -> dict:
+        dry_run: bool = False, leak_budget: float = 0.01) -> dict:
     cfg = JobConfig.model_validate(json.load(open(job_path, encoding="utf-8")))
     repo = Repository(cfg.company_id)
     pos, neg = labels(cfg)
@@ -166,11 +167,13 @@ def run(job_path: str, *, trigger: str = "manual", band: float | None = None,
             reason = (f"两组分数分不开：该淘汰最高 {max(sw['neg_scores']):.1f} ≥ "
                       f"该留最低 {min(sw['pos_scores']):.1f} —— 不动线，先查锚点/维度设计")
         else:
-            best = choose_line(sw["candidates"])
-            if best:
+            best, why = choose_line_within_budget(sw["candidates"], len(pos), budget=leak_budget)
+            if best is None:
+                reason = why
+            else:
                 status = "applied"
                 reason = (f"漏放 {best['leak']} · 误放 {best['wrong']} · 转人工 {best['manual']}"
-                          f"（候选线 {len(sw['candidates'])} 条，含 {len(pos)} 该留 / {len(neg)} 该淘汰）")
+                          f"（{why}；含 {len(pos)} 该留 / {len(neg)} 该淘汰）")
 
     samples_meta = {
         "pos": [{"resume_id": p["resume_id"], "score": _score_of(rows_by_resume, p["resume_id"])} for p in pos],
@@ -281,10 +284,14 @@ def main() -> int:
     ap.add_argument("--trigger", default="manual", choices=["manual", "spot_check_error"])
     ap.add_argument("--band", type=float, default=None)
     ap.add_argument("--dry-run", action="store_true", help="只算不改（看会把线改成多少）")
+    ap.add_argument("--leak-budget", type=float, default=0.01,
+                    help="漏放率预算（默认 1%%）：候选线必须能**在统计上证明**漏放不超过它，"
+                         "证明不了就不动线并告诉你还缺多少样本")
     a = ap.parse_args()
 
     if a.cmd == "run":
-        r = run(a.job, trigger=a.trigger, band=a.band, dry_run=a.dry_run)
+        r = run(a.job, trigger=a.trigger, band=a.band, dry_run=a.dry_run,
+                leak_budget=a.leak_budget)
         print(f"[{r['status']}] {r['reason']}")
         print(f"达标线：{r['before_line']} → {r['after_line']}"
               + (f"（新版本 v{r['new_version']}，旧配置已备份）" if r.get("new_version") else ""))
