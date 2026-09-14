@@ -118,7 +118,8 @@
     "band_width": 5,
     "dimension_aggregation": "best",
     "fallback_keyword_mapping": true,
-    "confidence_floor": 0.6
+    "confidence_floor": 0.6,
+    "labeling_repeats": 3
   },
   "calibration": {
     "status": "uncalibrated",

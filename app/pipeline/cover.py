@@ -67,7 +67,14 @@ def _page_of(parse: ResumeParse, start: int) -> int | None:
 
 def cover_dimensions(job: JobConfig, parse: ResumeParse, client: SiliconFlowClient, *,
                      model: str | None = None, temperature: float = 0.0,
-                     max_tokens: int = 4000) -> CoverOutcome:
+                     max_tokens: int = 4000, retries: int = 1) -> CoverOutcome:
+    """按维度定向取证。
+
+    ⚠️ **失败必须重试**（实测教训）：这一段偶发 `failed`（模型输出不合契约），一失败标注池就少了
+    十几条取证条目 → 同一份简历的判定分从 76.6 掉到 54.8（极差 22 分），而当时只写了一句备注、
+    评估照样自动处置。**一次覆盖取证失败的代价是 20 分**，所以这里重试一次；
+    重试仍失败则由调用方把 `cover` 记进 stage_status → 强制转人工（不许静默掉分）。
+    """
     dim_lines = "\n".join(f"- {d.id} = {d.name}（权重 {d.weight:g}）：{d.anchors.合格[:80]}" for d in job.dimensions)
     user = TPL_COVER.format(job_title=job.job_title, jd=(job.jd or "")[:1200],
                             dim_lines=dim_lines, resume=parse.text or "")
@@ -76,6 +83,14 @@ def cover_dimensions(job: JobConfig, parse: ResumeParse, client: SiliconFlowClie
                           prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_COVER, TPL_COVER),
                           config_version=job.config_version, model=model, max_tokens=max_tokens,
                           temperature=temperature)
+    for _ in range(max(0, retries)):
+        if res.obj is not None:
+            break
+        res = call_structured(client, stage="cover", system=SYS_COVER, user=user,
+                              model_cls=LlmCoverOutput, coercer=coerce_cover, job=job,
+                              prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_COVER, TPL_COVER),
+                              config_version=job.config_version, model=model, max_tokens=max_tokens,
+                              temperature=temperature)
 
     out = CoverOutcome(meta=res.meta)
     norm = _norm_view(parse)

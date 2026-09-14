@@ -208,7 +208,9 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     # 导致部分维度整段无条目（实测 6 维里 3 维对 7 成简历为空）。这里补一次岗位相关的定向取证。
     cover = cover_dimensions(job, parse, client, model=model, temperature=temperature)
     if not cover.ok:
-        notes.append("取证段失败：本次评估未做维度覆盖校验，判据按原有条目计算")
+        # 取证段失败 = 这份简历少了十几条维度证据（实测判定分差 20 分）→ 不许静默降分自动处置。
+        # 这里记 note；真正拦住自动处置的是 stage_status["cover"]（decide() 的降级分支）。
+        notes.append("取证段失败：本次评估未做维度覆盖校验，判据仅按原有条目计算 → 已记录为降级，强制转人工")
     span_map = dict(cover.span_map)
     pool = cover.span_pool(parse)          # 解析证据 + 取证证据的统一池（门槛/加分/引用都用它）
 
@@ -269,7 +271,8 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
     gate_total, parts = gate_score(job, [d.model_dump(mode="json") for d in rules.dimensions],
                                    [e.text for e in parse.evidence], bonus_rank=bonus_rank)
 
-    stage_status = {"label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
+    stage_status = {"cover": cover.meta.validation.status if cover.meta else "failed",
+                    "label": label_res_status, "compare": compare_res.status, "fit": fit_res.status}
     if q_res is not None:
         stage_status["questions"] = q_res.status
 

@@ -267,7 +267,9 @@ class Evaluation(Strict):
 
         # 3) 安全约束：自动处置不许建立在"未锚定证据"或"降级输出"之上
         if self.decision in ("auto_pass", "auto_reject"):
-            for st in (self.stages.label, self.stages.compare, self.stages.fit):
+            for st in (self.stages.cover, self.stages.label, self.stages.compare, self.stages.fit):
+                if st is None:
+                    continue
                 if st.validation.status in ("degraded", "failed"):
                     raise ValueError(f"{st.stage} 阶段输出 {st.validation.status}：自动处置不被允许（应转人工）")
             anchored = {c.span_id: c.anchored for c in self.cited_evidence}
@@ -305,7 +307,10 @@ class Evaluation(Strict):
     # ------------------------------------------------------------ 便捷
     @property
     def stage_status(self) -> dict[str, ValidationStatus]:
-        out = {s.stage: s.validation.status for s in (self.stages.label, self.stages.compare, self.stages.fit)}
+        """各模型阶段的状态（判定降级用）。**cover 必须在内**：取证段一失败，标注池就少十几条，
+        判定分会掉 20 分（实测 76.6 → 54.8）——不把它算进降级，就会静默降分还能自动处置。"""
+        stages = [self.stages.cover, self.stages.label, self.stages.compare, self.stages.fit]
+        out = {s.stage: s.validation.status for s in stages if s is not None}
         if self.stages.questions:
             out["questions"] = self.stages.questions.validation.status
         return out
