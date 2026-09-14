@@ -46,6 +46,36 @@
           "title": "Difficulty",
           "type": "string"
         },
+        "relevance_score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "相似度的**连续值**（0~1）：强=1.0 是基准，中间自己取（0.53、0.6…）。不填则由 relevance 标签推导。三档离散会把「沾边程度不同」的人抹平。",
+          "title": "Relevance Score"
+        },
+        "difficulty_score": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": 0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "难度的**连续值**（0.5~1.5）：中=1.0、低=0.5、高=1.5，中间线性取值。不填则由 difficulty 标签推导。三档离散会让项得分只有 0.5/1.0/1.5 三种倍数。",
+          "title": "Difficulty Score"
+        },
         "dimension": {
           "anyOf": [
             {

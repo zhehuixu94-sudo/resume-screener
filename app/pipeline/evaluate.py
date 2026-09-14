@@ -158,14 +158,17 @@ def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict]
             sid = _span_id_of(src["item_id"], parse, span_map or {})
             labeled.append({"item_id": src["item_id"], "idx": int(it.idx), "block": it.block,
                             "capability": it.capability, "evidence": it.evidence, "relevance": it.relevance,
-                            "difficulty": it.difficulty, "dimension": it.dimension, "reason": it.reason,
+                            "relevance_score": it.relevance_score, "difficulty": it.difficulty,
+                            "difficulty_score": it.difficulty_score,
+                            "dimension": it.dimension, "reason": it.reason,
                             "confidence": it.confidence, "span_id": sid})
     else:
         for f in flat:                                   # 降级：标注段彻底失败 → 中性值（分数偏低，只能转人工）
             sp = _span_id_of(f["item_id"], parse, span_map or {})
             labeled.append({"item_id": f["item_id"], "idx": f["idx"], "block": f["block"],
                             "capability": f["capability"], "evidence": f["evidence"], "relevance": "中",
-                            "difficulty": "中", "dimension": None, "reason": "标注段失败，系统中性兜底",
+                            "relevance_score": None, "difficulty": "中", "difficulty_score": None,
+                            "dimension": None, "reason": "标注段失败，系统中性兜底",
                             "confidence": 0.0, "span_id": sp})
     return labeled
 

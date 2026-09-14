@@ -38,7 +38,9 @@ def load_rows(cfg: JobConfig, src_version: str | None = None) -> list[dict]:
         for d in old.dimensions:
             for it in d.items:
                 labeled.append({"item_id": it.item_id, "capability": it.capability, "relevance": it.relevance,
-                                "difficulty": it.difficulty, "dimension": d.id, "reason": it.reason,
+                                "relevance_score": it.relevance_score, "difficulty": it.difficulty,
+                                "difficulty_score": it.difficulty_score,
+                                "dimension": d.id, "reason": it.reason,
                                 "confidence": it.confidence, "span_id": it.span_id})
         for u in old.unmapped_items:
             labeled.append({"item_id": u.item_id, "capability": u.capability, "relevance": u.relevance,
@@ -79,7 +81,7 @@ def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
 
 def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float, *,
                             budget: float = 60.0, basic_items: list[str] | None = None,
-                            quality_baseline: float | None = None,
+                            aggregation: str = "best",
                             reject_border_when_low: bool | None = None, gate: bool = True) -> str:
     """按**等分制**算分 + 指定达标线重算处置（离线，0 token）。
 
@@ -91,7 +93,7 @@ def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float,
         upd["reject_border_when_low"] = reject_border_when_low
     cfg2 = cfg.model_copy(update={"scoring": cfg.scoring.model_copy(update=upd)})
     rules = equal_split_outcome(cfg2, row["labeled"], budget=budget, basic_items=basic_items,
-                                quality_baseline=quality_baseline)
+                                aggregation=aggregation)
     parse, old = row["parse"], row["old"]
     bonus = bonus_layer(cfg2, parse, row["labeled"])
     hard = check_hard_filters(cfg2, parse, old.llm_compare)

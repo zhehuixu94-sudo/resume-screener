@@ -46,12 +46,18 @@ TPL_LABEL = """【岗位】{job_title}
 任务：为每个能力项标注 相关性、难度，选出它归属的维度，并给出理由与置信度。
 - relevance：强(直接对口) / 中(沾边) / 弱(泛泛) / 无关(完全不对口)
 - difficulty：高 / 中 / 低（该项经历本身的含金量，与岗位匹配无关）
+- relevance_score：相似度的**连续值 0~1**。锚点：强=1.0、中=0.66、弱=0.33、无关=0。
+  **不要只给这三档**：沾边程度有差别就取中间值（例：0.53、0.6、0.78），让"更贴一点"能体现出来。
+- difficulty_score：难度的**连续值 0.5~1.5**。锚点：中=1.0、低=0.5、高=1.5。
+  **不要只给这三档**：介于低与中之间就给 0.6~0.9（例：0.53、0.7、0.85），介于中与高之间给 1.1~1.4
+  （例：1.15、1.3）。同一个标签下不同深度也应有不同数值。
 - dimension：从上面 id 里选**最贴切的一个**；都不贴切时填第一个最接近的，理由里说明
 - confidence：你对这条标注的把握，0~1 的小数
 
 输出 JSON：
 {{"items":[{{"idx":1,"block":"所属块标题","capability":"能力项名称","evidence":"原文片段",
-  "relevance":"强","difficulty":"中","dimension":"维度id","reason":"为什么这么标","confidence":0.8}}]}}
+  "relevance":"强","relevance_score":0.85,"difficulty":"中","difficulty_score":0.9,
+  "dimension":"维度id","reason":"为什么这么标","confidence":0.8}}]}}
 要求：items 的条数与给你的一致，idx 必须对应，不许增删条目。"""
 
 TPL_COVER = """【岗位】{job_title}

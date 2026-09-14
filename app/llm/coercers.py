@@ -23,6 +23,26 @@ from ..contracts.coerce import (
     clean_free_text,
     drop_unknown,
 )
+
+# 连续值的兜底映射（模型没给 relevance_score / difficulty_score 时按标签推导）
+RELEVANCE_SCORE = {"强": 1.0, "中": 0.66, "弱": 0.33, "无关": 0.0}      # 强 = 1.0 是基准
+DIFFICULTY_SCORE = {"高": 1.5, "中": 1.0, "低": 0.5}                     # 中 = 1.0 是基准
+
+
+def _score_from_label(value, fallback: float, lo: float, hi: float, field: str,
+                      repairs: list[str]) -> float:
+    """连续值：模型给了就用（夹到合法区间）；没给或不合法 → 用标签推导的兜底值。"""
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        if value not in (None, ""):
+            repairs.append(f"{field}: 非数值 {value!r} → 按标签推导 {fallback}")
+        return fallback
+    if x < lo or x > hi:
+        repairs.append(f"{field}: {x} 越界 → 夹到 [{lo}, {hi}]")
+        return min(max(x, lo), hi)
+    return x
+
 from ..contracts.llm_outputs import (
     LlmCompareOutput,
     LlmCoverOutput,
@@ -118,6 +138,12 @@ def coerce_label_factory(flat_items: list[dict[str, Any]], job: Any):
             rec["idx"] = idx
             rec["relevance"] = clean_enum(rec.get("relevance"), RELEVANCE_MAP, f"items[{k}].relevance", repairs)
             rec["difficulty"] = clean_enum(rec.get("difficulty"), DIFFICULTY_MAP, f"items[{k}].difficulty", repairs)
+            rec["relevance_score"] = _score_from_label(
+                rec.get("relevance_score"), RELEVANCE_SCORE.get(rec["relevance"], 0.0), 0.0, 1.0,
+                f"items[{k}].relevance_score", repairs)
+            rec["difficulty_score"] = _score_from_label(
+                rec.get("difficulty_score"), DIFFICULTY_SCORE.get(rec["difficulty"], 1.0), 0.5, 1.5,
+                f"items[{k}].difficulty_score", repairs)
             rec["confidence"] = clean_confidence(rec.get("confidence"), f"items[{k}].confidence", repairs, default=0.0)
             # 维度：先按 id，再按名称映射；都映射不到 → None（不硬塞）
             dim = rec.get("dimension")

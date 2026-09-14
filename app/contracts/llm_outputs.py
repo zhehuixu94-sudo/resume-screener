@@ -47,6 +47,14 @@ class LlmLabelItem(Tolerant):
     evidence: str = ""
     relevance: Relevance
     difficulty: Difficulty
+    relevance_score: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="相似度的**连续值**（0~1）：强=1.0 是基准，中间自己取（0.53、0.6…）。"
+                    "不填则由 relevance 标签推导。三档离散会把「沾边程度不同」的人抹平。")
+    difficulty_score: float | None = Field(
+        default=None, ge=0.5, le=1.5,
+        description="难度的**连续值**（0.5~1.5）：中=1.0、低=0.5、高=1.5，中间线性取值。"
+                    "不填则由 difficulty 标签推导。三档离散会让项得分只有 0.5/1.0/1.5 三种倍数。")
     dimension: str | None = Field(default=None, description="必须命中岗位配置的维度 id；映射不到时为 null（该条目进 unmapped 单列，不硬塞进权重最高的维度）")
     reason: str = Field(min_length=2)
     confidence: float = Field(ge=0.0, le=1.0)

@@ -26,6 +26,9 @@ from ..contracts.llm_outputs import LlmCompareOutput, LlmFitOutput
 from ..contracts.resume_parse import ResumeParse  # noqa: TC001
 
 RELEVANCE_W = {"强": 1.0, "中": 0.66, "弱": 0.33, "无关": 0.0}
+# 连续值兜底（等于标签映射）：相似度强=1.0 是基准，难度中=1.0 是基准（低 0.5 / 高 1.5，中间线性）
+RELEVANCE_SCORE = {"强": 1.0, "中": 0.66, "弱": 0.33, "无关": 0.0}
+DIFFICULTY_SCORE = {"高": 1.5, "中": 1.0, "低": 0.5}
 DIFFICULTY_W = {"高": 3, "中": 2, "低": 1}
 MAX_ITEM_SCORE = 3.0
 
@@ -57,7 +60,11 @@ def rule_layer(job: JobConfig, labeled: list[dict], *, aggregation: str | None =
         rec = DimensionItemScore(item_id=i["item_id"], capability=i.get("capability") or "",
                                  relevance=i.get("relevance") or "无关", difficulty=i.get("difficulty") or "低",
                                  raw=raw, span_id=i.get("span_id"), reason=i.get("reason") or "",
-                                 confidence=i.get("confidence"))
+                                 confidence=i.get("confidence"),
+                                 relevance_score=i.get("relevance_score",
+                                                       RELEVANCE_SCORE.get(i.get("relevance"), 0.0)),
+                                 difficulty_score=i.get("difficulty_score",
+                                                        DIFFICULTY_SCORE.get(i.get("difficulty"), 1.0)))
         dim = i.get("dimension")
         if dim in rows:
             rows[dim]["items"].append(rec)

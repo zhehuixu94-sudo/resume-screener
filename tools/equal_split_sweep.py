@@ -41,8 +41,6 @@ def main() -> int:
     ap.add_argument("--lines", default="", help="候选线（逗号分隔）；留空 = 自动覆盖分布范围")
     ap.add_argument("--reject-border", action="store_true",
                     help="同时试 reject_border_when_low=开（模型判边缘但分数低也允许淘汰）")
-    ap.add_argument("--quality-baseline", type=float, default=None,
-                    help="把哪个质量当作「满足该项」=1.0：默认 None（强+高）；传 0.44 = 中/中 也算满足")
     ap.add_argument("--compare-line", type=float, default=None,
                     help="指定一条线，逐份对照现口径（含逐项零分情况）；配 --reject-border 一起看")
     ap.add_argument("--switch", dest="switch_on", action="store_true",
@@ -60,10 +58,10 @@ def main() -> int:
     basics = basic_items_of(cfg)
     n = len(basics)
     print(f"=== 等分制验证：{cfg.job_title}（{cfg.job_id}）× {len(rows)} 份 ===")
-    qb = f"质量基准 {a.quality_baseline}" if a.quality_baseline else "质量基准 强+高=满配"
+    qb = "质量基准 相似度强×难度中=1（难度中=1.0/低=0.5/高=1.5，中间线性取值）"
     print(f"及格项 {n} 个（{', '.join(basics)}）→ 每项基础分 {a.budget / n:.2f} 分；"
           f"项得分 = 基础分 × 相似度 × 难度（高 1.0 / 中 0.667 / 低 0.333；{qb}）")
-    print(f"满配（每项都强+高）= {a.budget:.0f} 分；现口径的达标线是 {cfg.scoring.pass_line}（满分 100）\n")
+    print(f"上限（每项都强+高难度）= {a.budget * 1.5:.0f} 分；刚好及格 = 每项强×中；现口径的达标线是 {cfg.scoring.pass_line}（满分 100）\n")
 
     # 1) 等分制分布
     totals = []
@@ -71,7 +69,7 @@ def main() -> int:
     detail = {}
     for r in rows:
         out = equal_split_outcome(cfg, r["labeled"], budget=a.budget, basic_items=basics,
-                                  quality_baseline=a.quality_baseline)
+)
         totals.append(out.base_total)
         detail[r["file"]] = out
         for d in out.dimensions:
@@ -100,7 +98,7 @@ def main() -> int:
     best = None
     for line in lines:
         dec = [decide_with_equal_split(cfg, r, line, a.band, budget=a.budget, basic_items=basics,
-                                       quality_baseline=a.quality_baseline, gate=not a.ignore_gate) for r in rows]
+                                       gate=not a.ignore_gate) for r in rows]
         c = collections.Counter(dec)
         rate = c["auto_reject"] / len(rows) * 100
         ok = "✅ ≥20%" if rate >= 20 else ""
@@ -115,8 +113,7 @@ def main() -> int:
         for r in rows:
             now = r["old"].decision
             new = decide_with_equal_split(cfg, r, line, a.band, budget=a.budget, basic_items=basics,
-                                          quality_baseline=a.quality_baseline,
-                                          reject_border_when_low=True if switch else None,
+                                                                                    reject_border_when_low=True if switch else None,
                                           gate=not a.ignore_gate)
             if now != new:
                 moved.append((r["file"], now, new, float(r["old"].base_total),
@@ -134,7 +131,7 @@ def main() -> int:
             for f, *_ in newly_rejected:
                 row = next(r for r in rows if r["file"] == f)
                 for d in equal_split_outcome(cfg, row["labeled"], budget=a.budget, basic_items=basics,
-                                             quality_baseline=a.quality_baseline).dimensions:
+           ).dimensions:
                     if d.points == 0:
                         zero[d.id] += 1
             print(f"  新增自动淘汰 {len(newly_rejected)} 份；其中'某及格项零证据'的分布：{dict(zero)}")
@@ -155,8 +152,7 @@ def main() -> int:
         print("\n【策略开关】reject_border_when_low=开（模型判「边缘」但分数 < 线−band 时也允许自动淘汰）")
         for line in lines[:6]:
             dec = [decide_with_equal_split(cfg, r, line, a.band, budget=a.budget, basic_items=basics,
-                                           quality_baseline=a.quality_baseline,
-                                           reject_border_when_low=True, gate=not a.ignore_gate) for r in rows]
+                                                                                      reject_border_when_low=True, gate=not a.ignore_gate) for r in rows]
             c = collections.Counter(dec)
             print(f"  线 {line:>5.0f} → 达标 {c['auto_pass']} / 转人工 {c['manual_review']} / "
                   f"淘汰 {c['auto_reject']}（淘汰率 {c['auto_reject'] / len(rows) * 100:.1f}%）")

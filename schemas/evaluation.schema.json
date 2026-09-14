@@ -227,6 +227,36 @@
           "title": "Raw",
           "type": "number"
         },
+        "relevance_score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "相似度连续值（0~1，强=1.0 为基准）；缺省时按 relevance 标签推导",
+          "title": "Relevance Score"
+        },
+        "difficulty_score": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": 0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "难度连续值（0.5~1.5，中=1.0）；缺省时按 difficulty 标签推导",
+          "title": "Difficulty Score"
+        },
         "span_id": {
           "anyOf": [
             {
@@ -302,8 +332,8 @@
           "type": "number"
         },
         "rate": {
-          "description": "得分率 = score / 3",
-          "maximum": 1.0,
+          "description": "满足程度 = 该维度质量（相似度×难度）。旧口径是 score/3（0~1）；等分制口径下 1.0 = 恰好满足（强相关+中等难度），上限 1.5（强+高难度）",
+          "maximum": 1.5,
           "minimum": 0.0,
           "title": "Rate",
           "type": "number"

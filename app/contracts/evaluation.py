@@ -55,6 +55,10 @@ class DimensionItemScore(Strict):
     relevance: Relevance
     difficulty: Difficulty
     raw: float = Field(ge=0.0, le=3.0)
+    relevance_score: float | None = Field(default=None, ge=0.0, le=1.0,
+        description="相似度连续值（0~1，强=1.0 为基准）；缺省时按 relevance 标签推导")
+    difficulty_score: float | None = Field(default=None, ge=0.5, le=1.5,
+        description="难度连续值（0.5~1.5，中=1.0）；缺省时按 difficulty 标签推导")
     span_id: str | None = None
     reason: str = ""
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -66,7 +70,9 @@ class DimensionScore(Strict):
     weight: float = Field(ge=0, le=100)
     aggregation: Literal["best", "top2_mean"]
     score: float = Field(ge=0.0, le=3.0, description="聚合后的原始分（0~3）")
-    rate: float = Field(ge=0.0, le=1.0, description="得分率 = score / 3")
+    rate: float = Field(ge=0.0, le=1.5,
+                        description="满足程度 = 该维度质量（相似度×难度）。旧口径是 score/3（0~1）；"
+                                    "等分制口径下 1.0 = 恰好满足（强相关+中等难度），上限 1.5（强+高难度）")
     points: float = Field(ge=0.0)
     best_item_id: str | None = Field(default=None, description="产生该维度最高分的条目——报告必须引用它，不是第一条")
     best_span_id: str | None = None

@@ -6,11 +6,13 @@
 **先定"及格要满足哪些项"，再把及格分等分给这些项**——一项满配就拿到它那一份，
 满足全部及格项 = 恰好及格分。权重的争议被"及格项目清单"取代（可人工勾选，也可从岗位维度初始化）。
 
-名词对齐（跟现有规则层用同一套标签，避免两套词汇）：
-  · 相似度 = relevance（强/中/弱/无关），系数 1.0 / 0.66 / 0.33 / 0；
-  · 难度   = difficulty（高/中/低），系数 3 / 2 / 1 —— 但要做成**质量系数**必须归一化到 ≤1，
-    否则"基础分 × 难度"会超过该项的基础分（1.0 是"满配"的上限）：高=1.0 / 中=0.667 / 低=0.333。
-  · 项得分 = (及格分 / N) × 相似度系数 × 难度质量系数   →  满配 = 及格分 / N。
+系数（HR 校准过的口径，别自己改回去）：
+  · 相似度 relevance_score ∈ [0, 1]：强 = 1.0（基准）；
+  · 难度   difficulty_score ∈ [0.5, 1.5]：**中 = 1.0 是基准**，低 = 0.5，高 = 1.5，中间**线性取值**
+    （0.53 / 0.6 / 1.15 这种都要能表达）——三档离散会把不同深度的经历抹成同一档；
+  · **质量基准 = 相似度强 × 难度中 = 1.0**：一项"强相关 + 中等难度"恰好拿到它那一份基础分；
+    高难度项可以拿到 1.5 份（上限 1.5），低难度只有 0.5 份 —— 所以总分上限不是 60，而是 60×1.5 = 90。
+  · 项得分 = (及格分 / N) × 相似度分 × 难度分。
 
 本模块只做**离线计算**（0 token）：输入是落库的标注结果，输出是与规则层同构的 RuleOutcome，
 这样双通道判定、硬门槛、冲突检测、三段带全都不用改。
@@ -19,11 +21,10 @@ from __future__ import annotations
 
 from ..contracts.evaluation import DimensionItemScore, DimensionScore, UnmappedItem
 from ..contracts.job_config import JobConfig
-from .rules import DIFFICULTY_W, RELEVANCE_W, RuleOutcome, _aggregate
+from .rules import DIFFICULTY_SCORE, RELEVANCE_SCORE, RuleOutcome, _aggregate
 
-MAX_PRODUCT = max(RELEVANCE_W.values()) * max(DIFFICULTY_W.values())      # 3.0
-DIFFICULTY_Q = {k: round(v / max(DIFFICULTY_W.values()), 3) for k, v in DIFFICULTY_W.items()}
-DEFAULT_BUDGET = 60.0                    # 及格总分（= 满足全部及格项且质量满配时的得分）
+MAX_QUALITY = 1.5                        # 相似度强(1.0) × 难度高(1.5)：单项最多拿 1.5 份基础分
+DEFAULT_BUDGET = 60.0                    # 及格总分（= 每个及格项都"强相关 + 中等难度"时的得分）
 
 
 def basic_items_of(job: JobConfig) -> list[str]:
@@ -35,32 +36,41 @@ def basic_items_of(job: JobConfig) -> list[str]:
     return [d.id for d in job.dimensions if d.weight > 0]
 
 
+def item_quality(i: dict) -> tuple[float, float, float]:
+    """一条证据项的（相似度分、难度分、质量=两者之积）。连续值优先，缺了按标签兜底。"""
+    rel = i.get("relevance_score")
+    if rel is None:
+        rel = RELEVANCE_SCORE.get(i.get("relevance"), 0.0)
+    diff = i.get("difficulty_score")
+    if diff is None:
+        diff = DIFFICULTY_SCORE.get(i.get("difficulty"), 1.0)
+    rel = min(max(float(rel), 0.0), 1.0)
+    diff = min(max(float(diff), 0.5), 1.5)
+    return rel, diff, round(rel * diff, 4)
+
+
 def equal_split_outcome(job: JobConfig, labeled: list[dict], *, budget: float = DEFAULT_BUDGET,
                         basic_items: list[str] | None = None, aggregation: str = "best",
-                        quality_cap: float = 1.0, quality_baseline: float | None = None) -> RuleOutcome:
+                        quality_cap: float = MAX_QUALITY) -> RuleOutcome:
     """等分制算分：返回与 rule_layer 同构的 RuleOutcome（可直接喂 decide()）。
 
-    quality_baseline：把"合格基准质量"归一化成 1.0。默认 None = 强+高 才算满配（1.0）；
-    传 0.44（= 中×中）时，"中/中"这一档就等同于"满足该项"，分数会以 budget 为中心——
-    这是让"满足全部及格项 = 恰好及格分"真正成立的做法（见 tools/equal_split_sweep.py 的对照）。
+    质量 = 相似度分 × 难度分，基准（强 × 中）= 1.0；**不顶格截断**（上限 1.5），
+    这样才能把"高难度经历"和"中等难度"区分开——截断会把上限压回 1.0，分数重新挤成一团。
     """
     basics = basic_items or basic_items_of(job)
     n = len(basics) or 1
     per = budget / n
     by_id = {d.id: d for d in job.dimensions}
-    base = quality_baseline or 1.0
 
     rows: dict[str, list[DimensionItemScore]] = {b: [] for b in basics}
     unmapped: list[UnmappedItem] = []
     for i in labeled:
-        rel = i.get("relevance")
-        diff = i.get("difficulty")
-        rel_c = RELEVANCE_W.get(rel, 0.0)
-        diff_c = DIFFICULTY_Q.get(diff, DIFFICULTY_Q["低"])
+        rel_c, diff_c, quality = item_quality(i)
         rec = DimensionItemScore(
-            item_id=i["item_id"], capability=i.get("capability") or "", relevance=rel or "无关",
-            difficulty=diff or "低", raw=round(rel_c * diff_c, 4), span_id=i.get("span_id"),
-            reason=i.get("reason") or "", confidence=i.get("confidence"))
+            item_id=i["item_id"], capability=i.get("capability") or "",
+            relevance=i.get("relevance") or "无关", difficulty=i.get("difficulty") or "低",
+            raw=quality, relevance_score=rel_c, difficulty_score=diff_c,
+            span_id=i.get("span_id"), reason=i.get("reason") or "", confidence=i.get("confidence"))
         dim = i.get("dimension")
         if dim in rows:
             rows[dim].append(rec)
@@ -75,8 +85,7 @@ def equal_split_outcome(job: JobConfig, labeled: list[dict], *, budget: float = 
         d = by_id.get(dim_id)
         items = rows[dim_id]
         # 该维度最强项的"质量"（已含相似度与难度）；没有证据 = 0 分（不是"缺省满分"）
-        quality = _aggregate([x.raw for x in items], aggregation) / base
-        quality = min(quality, quality_cap)
+        quality = min(_aggregate([x.raw for x in items], aggregation), quality_cap)
         points = round(per * quality, 2)
         total += points
         best = max(items, key=lambda x: x.raw, default=None)
