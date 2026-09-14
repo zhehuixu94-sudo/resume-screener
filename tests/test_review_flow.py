@@ -82,14 +82,14 @@ def test_pool_only_auto_reject(env) -> None:
 
 def test_draw_records_shortage_and_respects_want(env) -> None:
     cfg, apps, _ = env
-    out = review.draw(cfg, want=5, check_date="2026-01-01", archive_dir=env[2])
+    out = review.draw(cfg, want=5, check_date="2026-01-01", archive_dir=env[2], stratified=False)
     assert out["drawn"] == 3 and out["pool"] == 3, "池子只有 3 份就从实记录，不补假数据"
     assert len(review.listing(cfg, check_date="2026-01-01")) == 3
 
 
 def test_pass_archives_and_reject_enters_library(env) -> None:
     cfg, apps, tmp = env
-    review.draw(cfg, want=5, check_date="2026-01-02", archive_dir=tmp)
+    review.draw(cfg, want=5, check_date="2026-01-02", archive_dir=tmp, stratified=False)
     pass_id, rej_id = apps[0]["application_id"], apps[1]["application_id"]
 
     res = review.review(cfg, pass_id, "pass", note="项目扎实", source="spot_check", archive_dir=tmp,
@@ -112,8 +112,8 @@ def test_pass_archives_and_reject_enters_library(env) -> None:
 
 def test_not_accumulating_and_unreviewed_can_be_redrawn(env) -> None:
     cfg, apps, tmp = env
-    review.draw(cfg, want=2, check_date="2026-01-03", archive_dir=tmp)
-    review.draw(cfg, want=2, check_date="2026-01-04", archive_dir=tmp)      # 第二天：旧清单过期
+    review.draw(cfg, want=2, check_date="2026-01-03", archive_dir=tmp, stratified=False)
+    review.draw(cfg, want=2, check_date="2026-01-04", archive_dir=tmp, stratified=False)   # 第二天：旧清单过期
     old = db.fetch_all("""SELECT state FROM spot_check_item WHERE job_id=%s AND check_date='2026-01-03'""",
                        (JOB_ID,))
     assert all(r["state"] == "expired" for r in old), "不累加：旧批次未复核项要过期"
@@ -129,7 +129,7 @@ def test_not_accumulating_and_unreviewed_can_be_redrawn(env) -> None:
 
 def test_stats_counts_errors(env) -> None:
     cfg, apps, tmp = env
-    review.draw(cfg, want=5, check_date="2026-01-05", archive_dir=tmp)
+    review.draw(cfg, want=5, check_date="2026-01-05", archive_dir=tmp, stratified=False)
     review.review(cfg, apps[0]["application_id"], "pass", source="spot_check", archive_dir=tmp, day="2026-01-05")
     s = review.stats(cfg, day="2026-01-05")
     assert s["today_errors"] == 1 and s["reviewed_today"] == 1
@@ -138,10 +138,48 @@ def test_stats_counts_errors(env) -> None:
 
 def test_clear_manual_reject_is_soft_delete(env) -> None:
     cfg, apps, tmp = env
-    review.draw(cfg, want=5, check_date="2026-01-06", archive_dir=tmp)
+    review.draw(cfg, want=5, check_date="2026-01-06", archive_dir=tmp, stratified=False)
     review.review(cfg, apps[0]["application_id"], "reject", source="spot_check", archive_dir=tmp)
     assert review.clear_manual_reject(cfg, apps[0]["application_id"]) == 1
     assert review.manual_reject_library(cfg) == [], "清理后不在库里"
     row = db.fetch_one("SELECT cleared_at FROM review_decision WHERE application_id = %s",
                        (apps[0]["application_id"],))
     assert row["cleared_at"] is not None, "软删除：记录仍在，可追溯"
+
+
+def test_strata_of_classifies_by_distance_to_line(env) -> None:
+    """擦线带 / 中间带 / 远端的划分：越靠近"线−band"，越要人工看。"""
+    from app.review import strata_of
+    line, band = 60.0, 5.0                     # 淘汰门槛 = 55
+    assert strata_of(54.9, line, band) == "near"
+    assert strata_of(45.0, line, band) == "near"      # 55-10 = 45 起算
+    assert strata_of(44.9, line, band) == "mid"
+    assert strata_of(25.1, line, band) == "mid"       # 55-30 = 25 起算
+    assert strata_of(24.9, line, band) == "far"
+    assert strata_of(10.0, line, band) == "far"
+
+
+def test_stratified_draw_concentrates_on_near_band(env) -> None:
+    """分层抽检要把人力压在擦线带：给 30 份不同分数的淘汰件，擦线带应被优先抽走。"""
+    cfg, apps, tmp = env
+    line, band = float(cfg.scoring.pass_line), float(cfg.scoring.band_width)
+    scores = [line - band - 1] * 6 + [line - band - 15] * 6 + [10.0] * 6     # 6 擦线 / 6 中间 / 6 远端
+    db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
+    for i, sc in enumerate(scores):
+        rid = f"s{uuid.uuid4().hex[:14]}"
+        db.execute("""INSERT INTO resume (resume_id, company_id, file_name, file_sha256, file_format)
+                      VALUES (%s, 'local', %s, %s, 'txt')""", (rid, f"s_{i}.txt", rid))
+        row = db.execute("""INSERT INTO application (company_id, resume_id, job_id, config_version, state)
+                            VALUES ('local', %s, %s, %s, 'evaluated') RETURNING application_id""",
+                         (rid, JOB_ID, VERSION), returning=True)
+        db.execute("""INSERT INTO evaluation (application_id, resume_id, job_id, verdict, decision, base_total,
+                                              confidence, config_version, model_id, prompt_version, prompt_hash,
+                                              aggregation, pass_line, payload)
+                      VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', %s, '{}'::jsonb)""",
+                   (int(row["application_id"]), rid, JOB_ID, float(sc), VERSION, line))
+        apps.append({"application_id": int(row["application_id"]), "resume_id": rid, "file_path": ""})
+    out = review.draw(cfg, check_date="2026-02-01", archive_dir=tmp)
+    assert out["strata_size"]["near"] == 6 and out["strata_size"]["far"] == 6
+    near_drawn = sum(1 for it in out["items"] if it["stratum"] == "near")
+    far_drawn = sum(1 for it in out["items"] if it["stratum"] == "far")
+    assert near_drawn == 3 and far_drawn == 0, f"擦线带该抽 3 份、远端 0 份，实际 {out['items']}"

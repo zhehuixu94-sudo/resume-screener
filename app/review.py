@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from .contracts import JobConfig                 # noqa: E402
+from .pipeline.stats import leak_upper_bound, samples_needed   # noqa: E402
 from .store import Repository, db                # noqa: E402
 
 DEFAULT_ARCHIVE_DIR = os.environ.get("RESUME_ARCHIVE_DIR") or "out/passed"
@@ -48,7 +49,21 @@ def today_cn() -> str:
     return datetime.now(CN_TZ).date().isoformat()
 ARCHIVE_TOP = "简历"                              # 通过件归档顶层目录名（子目录按天）
 ARCHIVE_REJECT_TOP = "淘汰"                        # 淘汰件归档顶层目录名（要留证：复看/申诉/复现）
-DEFAULT_WANT = 5                                  # 每天抽几份
+DEFAULT_WANT = 5                                  # 每天抽几份（旧口径：固定份数，1000 份规模下覆盖太低）
+# 分层抽检（推荐，按批）：漏放几乎只发生在"擦线带"，人力要集中在那儿
+STRATUM_RATIOS = (0.50, 0.10, 0.03)               # 擦线带 / 中间带 / 远端 的抽检比例
+NEAR_WIDTH = 10.0                                 # 擦线带宽度：分数在 [线-band-10, 线-band)
+MID_WIDTH = 30.0                                  # 中间带：再往下 10~30 分
+
+
+def strata_of(score: float, line: float, band: float) -> str:
+    """按分数把被淘汰的简历分层——越靠近线，判定越容易漂，越要人工看。"""
+    cut = line - band                              # 低于它是自动淘汰判据
+    if cut - NEAR_WIDTH <= score < cut:
+        return "near"                              # 擦线带（重点）
+    if cut - MID_WIDTH <= score < cut - NEAR_WIDTH:
+        return "mid"                               # 中间带
+    return "far"                                   # 远端
 
 
 # ---------------------------------------------------------------- 池子
@@ -87,9 +102,40 @@ def manual_reject_library(cfg: JobConfig) -> list[dict]:
 
 
 # ---------------------------------------------------------------- 抽检
-def draw(cfg: JobConfig, *, want: int = DEFAULT_WANT, check_date: str | None = None,
-         archive_dir: str = DEFAULT_ARCHIVE_DIR) -> dict:
-    """生成本日抽检清单。旧批次的未复核项先过期（不累加），再抽 want 份。"""
+def _pick_stratified(rows: list[dict], cfg: JobConfig, want: int | None) -> tuple[list[dict], dict]:
+    """分层抽检：按分数段配额抽，而不是"谁先来抽谁"。
+
+    为什么这么抽：实测同一份简历重复跑总分极差可达 8 分，所以**擦线带**（分数刚低于线−band）
+    才是漏放高发区；远端（分数低 30 分以上）几乎不可能漏放。把人力按 50%/10%/3% 分配，
+    整体漏放才能压到 1% 以内，而不用把淘汰件全看一遍。
+    """
+    line, band = float(cfg.scoring.pass_line), float(cfg.scoring.band_width)
+    buckets: dict[str, list[dict]] = {"near": [], "mid": [], "far": []}
+    for r in rows:
+        buckets[strata_of(float(r["base_total"]), line, band)].append(r)
+    total = sum(len(v) for v in buckets.values())
+    ratio = {k: v for k, v in zip(("near", "mid", "far"), STRATUM_RATIOS)}
+    quota = {k: int(len(buckets[k]) * ratio[k]) for k in buckets}
+    if want is not None:                           # 给了总量上限就按比例缩放
+        ask = sum(quota.values())
+        if ask > want and ask > 0:
+            for k in quota:
+                quota[k] = int(quota[k] * want / ask)
+    picked: list[dict] = []
+    for k in ("near", "mid", "far"):               # 擦线带优先占额度
+        picked += buckets[k][:quota[k]]
+    return picked[:want] if want is not None else picked, {
+        "strata_size": {k: len(v) for k, v in buckets.items()},
+        "strata_quota": quota, "pool": total}
+
+
+def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = None,
+         archive_dir: str = DEFAULT_ARCHIVE_DIR, stratified: bool = True) -> dict:
+    """生成本日抽检清单。旧批次的未复核项先过期（不累加）。
+
+    stratified=True（默认）：按擦线带/中间带/远端的比例抽（1000 份规模下抽 10~12%）。
+    stratified=False：老的"固定 want 份"口径（want 默认 5）。
+    """
     day = check_date or today_cn()
 
     # 不累加：昨天没看的清单过期，不再出现在待办里
@@ -107,7 +153,13 @@ def draw(cfg: JobConfig, *, want: int = DEFAULT_WANT, check_date: str | None = N
     rows = pool(cfg)
     fresh = [r for r in rows if not r["drawn_before"]]        # 优先没抽过的
     retry = [r for r in rows if r["drawn_before"]]            # 抽过但没人看过的，可以再抽
-    picked = (fresh + retry)[:want]
+    ordered = fresh + retry
+    if stratified:
+        picked, info = _pick_stratified(ordered, cfg, want)
+        want_eff = len(picked)
+    else:
+        want = DEFAULT_WANT if want is None else want
+        picked, info, want_eff = ordered[:want], {"strata_size": {}, "strata_quota": {}, "pool": len(rows)}, want
 
     batch = db.execute(
         """INSERT INTO spot_check_batch (company_id, job_id, config_version, check_date, drawn, want, pool_size, note)
@@ -116,8 +168,8 @@ def draw(cfg: JobConfig, *, want: int = DEFAULT_WANT, check_date: str | None = N
            DO UPDATE SET drawn = EXCLUDED.drawn, want = EXCLUDED.want,
                          pool_size = EXCLUDED.pool_size, note = EXCLUDED.note
            RETURNING batch_id""",
-        (cfg.company_id, cfg.job_id, cfg.config_version, day, len(picked), want, len(rows),
-         "" if len(rows) >= want else f"池子只有 {len(rows)} 份，抽不满 {want} 份"), returning=True)
+        (cfg.company_id, cfg.job_id, cfg.config_version, day, len(picked), want_eff, len(rows),
+         "" if len(rows) >= want_eff else f"池子只有 {len(rows)} 份，抽不满 {want_eff} 份"), returning=True)
     batch_id = int(batch["batch_id"])
 
     for r in picked:
@@ -132,10 +184,13 @@ def draw(cfg: JobConfig, *, want: int = DEFAULT_WANT, check_date: str | None = N
     Repository(cfg.company_id).audit("spot_check_draw", "job", f"{cfg.job_id}@{cfg.config_version}",
                                      {"date": day, "drawn": len(picked), "pool": len(rows), "want": want,
                                       "expired_prev": int((expired or {}).get("n", 0))})
-    return {"date": day, "batch_id": batch_id, "drawn": len(picked), "pool": len(rows), "want": want,
+    return {"date": day, "batch_id": batch_id, "drawn": len(picked), "pool": len(rows), "want": want_eff,
+            "strata_size": info.get("strata_size", {}), "strata_quota": info.get("strata_quota", {}),
             "expired_prev": int((expired or {}).get("n", 0)),
             "items": [{"application_id": r["application_id"], "file_name": r["file_name"],
-                       "score": r["base_total"]} for r in picked]}
+                       "score": r["base_total"],
+                       "stratum": strata_of(float(r["base_total"]), float(cfg.scoring.pass_line),
+                                            float(cfg.scoring.band_width))} for r in picked]}
 
 
 def listing(cfg: JobConfig, *, check_date: str | None = None) -> list[dict]:
@@ -248,6 +303,15 @@ def stats(cfg: JobConfig, *, day: str | None = None) -> dict:
         (cfg.job_id, day))
     errors = sum(1 for r in rows if r["hr_action"] == "pass")
     decided = sum(1 for r in rows if r["hr_action"])
+    # 累计抽检：多批累积才能证明"漏放 ≤1%"（单批 30 份的上界约 9.5%）
+    cum = db.fetch_one(
+        """SELECT count(*) AS checked,
+                  sum(CASE WHEN d.action = 'pass' THEN 1 ELSE 0 END) AS leaks
+             FROM spot_check_item i
+             LEFT JOIN review_decision d ON d.application_id = i.application_id AND d.cleared_at IS NULL
+            WHERE i.job_id = %s AND i.state IN ('passed', 'rejected')""",
+        (cfg.job_id,))
+    checked, leaks = int((cum or {}).get("checked") or 0), int((cum or {}).get("leaks") or 0)
     return {
         "date": day,
         "pool_size": len(pool(cfg)),
@@ -261,6 +325,12 @@ def stats(cfg: JobConfig, *, day: str | None = None) -> dict:
         "labels_total": db.fetch_one(
             "SELECT count(*) AS n FROM review_decision WHERE company_id=%s AND job_id=%s AND cleared_at IS NULL",
             (cfg.company_id, cfg.job_id))["n"],
+        "spotcheck_cumulative": {
+            "checked": checked, "leaks": leaks,
+            "leak_rate": round(leaks / checked, 4) if checked else None,
+            "leak_upper_bound_95": round(leak_upper_bound(leaks, checked), 4) if checked else None,
+            "samples_to_prove_1pct": samples_needed(0.01),
+        },
     }
 
 
@@ -274,6 +344,7 @@ def main() -> int:
     ap.add_argument("--date", default=None, help="指定日期 YYYY-MM-DD（默认按北京时间算的今天）")
     ap.add_argument("--note", default="", help="复核备注（HR 的一句话理由）")
     ap.add_argument("--archive-dir", default=DEFAULT_ARCHIVE_DIR, help="通过件归档根目录")
+    ap.add_argument("--flat", action="store_true", help="退回固定份数口径（默认是分层抽检）")
     ap.add_argument("--json", dest="json_out", action="store_true", help="以 JSON 输出（给脚本/界面用）")
     a = ap.parse_args()
 
@@ -297,11 +368,19 @@ def main() -> int:
         return 0
 
     if a.cmd == "draw":
-        out = draw(cfg, want=a.want, check_date=a.date, archive_dir=a.archive_dir)
-        print(f"已生成 {out['date']} 的抽检清单：抽到 {out['drawn']} 份 / 目标 {out['want']} 份 "
+        out = draw(cfg, want=a.want or None, check_date=a.date, archive_dir=a.archive_dir,
+                   stratified=not a.flat)
+        mode = "分层（擦线带 50% / 中间带 10% / 远端 3%）" if not a.flat else f"固定 {a.want} 份"
+        print(f"已生成 {out['date']} 的抽检清单：{mode} → 抽到 {out['drawn']} 份"
               f"（池子 {out['pool']} 份，过期旧清单 {out['expired_prev']} 条）")
+        if out.get("strata_size"):
+            need = " / ".join(f"{k} {out['strata_size'][k]} 份"
+                              for k in ("near", "mid", "far") if out["strata_size"].get(k))
+            print(f"  池子分层：{need}")
+            print(f"  本批配额：{out['strata_quota']}")
         for it in out["items"]:
-            print(f"  app={it['application_id']:<5} {it['file_name']:<20} 分 {it['score']}")
+            tag = {"near": "★擦线", "mid": "中间", "far": "远端"}.get(it.get("stratum", ""), "")
+            print(f"  {tag:<4} app={it['application_id']:<5} {it['file_name']:<20} 分 {it['score']}")
         if out["drawn"] < out["want"]:
             print(f"⚠️  池子不足：自动淘汰件只有 {out['pool']} 份（池子大小由达标线决定，见 tools/line_sweep.py）")
         return 0
@@ -348,6 +427,11 @@ def main() -> int:
     if a.cmd == "stats":
         s = stats(cfg, day=a.date)
         print(json.dumps(s, ensure_ascii=False, indent=2))
+        cum = s["spotcheck_cumulative"]
+        print(f"累计抽检：{cum['checked']} 份 · 发现漏放 {cum['leaks']} 个 · "
+              f"漏放率 {cum['leak_rate'] if cum['leak_rate'] is not None else '—'} · "
+              f"95% 置信上界 {cum['leak_upper_bound_95'] if cum['leak_upper_bound_95'] is not None else '—'}"
+              f"（证明 1% 需累计约 {cum['samples_to_prove_1pct']} 份）")
         if s["today_errors"] >= 2:
             print("→ 今日误差 ≥2，可触发自动校准")
         return 0
