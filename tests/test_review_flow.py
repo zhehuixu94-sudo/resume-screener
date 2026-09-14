@@ -68,6 +68,7 @@ def env():
         apps.append({"application_id": app_id, "resume_id": rid, "file_path": path})
     yield cfg, apps, tmp
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
+    db.execute("DELETE FROM spot_check_batch WHERE job_id = %s", (JOB_ID,))     # 批次没有外键，得自己清
     db.execute("DELETE FROM calibration WHERE job_id = %s", (JOB_ID,))
     for a in apps:
         db.execute("DELETE FROM resume WHERE resume_id = %s", (a["resume_id"],))
