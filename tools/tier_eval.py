@@ -98,7 +98,7 @@ def main() -> int:
     # 等分制口径下的线扫描：找"漏放=0 且淘汰率接近目标"的线
     if a.equal_split:
         basics = basic_items_of(cfg)
-        replay = {r["file_name"]: r for r in load_rows(cfg, cfg.config_version)}
+        replay = {r["file"]: r for r in load_rows(cfg, cfg.config_version)}   # load_rows 用 "file" 键
         print(f"\n【等分制口径扫描】（{len(basics)} 个及格项，每项 {60 / len(basics):.2f} 分，band {a.band}）")
         print(f"{'线':>5}{'淘汰率':>8}{'漏放':>6}{'漏放上界':>10}{'误放':>6}{'擦线带':>8}  结论")
         for line in [float(x) for x in a.lines.split(",") if x.strip()]:
