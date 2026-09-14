@@ -101,6 +101,9 @@ def test_pass_archives_and_reject_enters_library(env) -> None:
     review.review(cfg, rej_id, "reject", source="spot_check", archive_dir=tmp)
     lib = review.manual_reject_library(cfg)
     assert [r["application_id"] for r in lib] == [rej_id], "淘汰件进人工淘汰库"
+    rej_row = db.fetch_one("SELECT archived_path FROM review_decision WHERE application_id = %s", (rej_id,))
+    assert rej_row["archived_path"] and os.path.exists(rej_row["archived_path"]), "淘汰件也要留证归档"
+    assert os.path.basename(os.path.dirname(os.path.dirname(rej_row["archived_path"]))) == review.ARCHIVE_REJECT_TOP
 
     # 已复核的件不再回池子；未复核的（第三份）仍在
     assert [r["application_id"] for r in review.pool(cfg)] == [apps[2]["application_id"]]

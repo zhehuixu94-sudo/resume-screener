@@ -39,7 +39,8 @@ from .contracts import JobConfig                 # noqa: E402
 from .store import Repository, db                # noqa: E402
 
 DEFAULT_ARCHIVE_DIR = os.environ.get("RESUME_ARCHIVE_DIR") or "out/passed"
-ARCHIVE_TOP = "简历"                              # 归档顶层目录名（子目录按天）
+ARCHIVE_TOP = "简历"                              # 通过件归档顶层目录名（子目录按天）
+ARCHIVE_REJECT_TOP = "淘汰"                        # 淘汰件归档顶层目录名（要留证：复看/申诉/复现）
 DEFAULT_WANT = 5                                  # 每天抽几份
 
 
@@ -156,8 +157,12 @@ def listing(cfg: JobConfig, *, check_date: str | None = None) -> list[dict]:
 
 # ---------------------------------------------------------------- 复核动作
 def archive_resume(cfg: JobConfig, application_id: int, *, archive_dir: str = DEFAULT_ARCHIVE_DIR,
-                   day: str | None = None) -> str:
-    """通过件归档：`<archive_dir>/简历/<YYYY-MM-DD>/<原文件名>`（同一天通过的多份放同一文件夹）。"""
+                   day: str | None = None, top: str = ARCHIVE_TOP) -> str:
+    """归档原件：`<archive_dir>/<顶层目录>/<YYYY-MM-DD>/<原文件名>`。
+
+    通过件进 `简历/`（HR 拿去面试），淘汰件进 `淘汰/`（要留证：抽检复看、申诉、复现都靠它）。
+    同一天的多份放同一文件夹——按天分文件夹是为了"这一批是几号筛的"一眼可见。
+    """
     meta = db.fetch_one(
         """SELECT r.file_name, r.file_path, r.resume_id FROM application a
              JOIN resume r ON r.resume_id = a.resume_id WHERE a.application_id = %s""",
@@ -168,7 +173,7 @@ def archive_resume(cfg: JobConfig, application_id: int, *, archive_dir: str = DE
     if not src or not os.path.exists(src):
         return ""                                     # 文件不在了：不阻塞复核，但归档路径留空（报告里能看到）
     day = day or _date.today().isoformat()
-    dest_dir = os.path.join(archive_dir, ARCHIVE_TOP, day)
+    dest_dir = os.path.join(archive_dir, top, day)
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, meta["file_name"])
     shutil.copy2(src, dest)
@@ -187,7 +192,8 @@ def review(cfg: JobConfig, application_id: int, action: str, *, note: str = "", 
     if not row:
         raise SystemExit(f"找不到 application_id={application_id}")
 
-    archived = archive_resume(cfg, application_id, archive_dir=archive_dir, day=day) if action == "pass" else ""
+    archived = archive_resume(cfg, application_id, archive_dir=archive_dir, day=day,
+                              top=ARCHIVE_TOP if action == "pass" else ARCHIVE_REJECT_TOP)
     db.execute(
         """INSERT INTO review_decision (company_id, application_id, resume_id, job_id, config_version,
                                         action, source, note, actor, archived_path, created_at)
