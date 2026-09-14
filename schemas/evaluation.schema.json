@@ -137,7 +137,8 @@
             "degraded_validation",
             "unanchored_evidence",
             "edge_band",
-            "edge_band_low_reject"
+            "edge_band_low_reject",
+            "stability_gate"
           ],
           "title": "Type",
           "type": "string"

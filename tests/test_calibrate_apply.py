@@ -84,6 +84,10 @@ def env():
             (app_id, rid, JOB_ID, float(score), json.dumps(payload, ensure_ascii=False)))
         apps.append({"application_id": app_id, "resume_id": rid, "label": "pass" if i < 3 else "reject"})
 
+    from app.pipeline import stability                  # 校准生效的前提：稳定性已达标
+    db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
+    stability.record(JOB_ID, "1", n_samples=4, agreement=0.9, score_range=2.0)
+
     for a in apps:                                     # 合成标注：高分该留 / 低分该淘汰
         db.execute(
             """INSERT INTO review_decision (company_id, application_id, resume_id, job_id, config_version,
@@ -94,6 +98,7 @@ def env():
     yield cfg, apps, cfg_path, tmp
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
     db.execute("DELETE FROM calibration WHERE job_id = %s", (JOB_ID,))
+    db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
     for a in apps:
         db.execute("DELETE FROM resume WHERE resume_id = %s", (a["resume_id"],))
     shutil.rmtree(tmp, ignore_errors=True)
@@ -127,4 +132,15 @@ def test_insufficient_samples_never_moves_the_line(env) -> None:
     res = calibrate.run(cfg_path, trigger="manual")
     assert res["status"] == "skipped" and "样本不足" in res["reason"]
     assert json.load(open(cfg_path, encoding="utf-8"))["scoring"]["pass_line"] == 60, "样本不足不许动线"
+    assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback"
+
+
+def test_stability_gate_blocks_calibration(env) -> None:
+    """稳定性没达标时，即便标注充足也不许改线（否则等于拿会漂的分数去改政策）。"""
+    from app.pipeline import stability
+    cfg, apps, cfg_path, tmp = env
+    db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
+    res = calibrate.run(cfg_path, trigger="manual")
+    assert res["status"] == "skipped" and "稳定性未达标" in res["reason"], res
+    assert json.load(open(cfg_path, encoding="utf-8"))["scoring"]["pass_line"] == 60
     assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback"

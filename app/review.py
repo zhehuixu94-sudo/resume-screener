@@ -31,7 +31,8 @@ import json
 import os
 import shutil
 import sys
-from datetime import date as _date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -39,6 +40,12 @@ from .contracts import JobConfig                 # noqa: E402
 from .store import Repository, db                # noqa: E402
 
 DEFAULT_ARCHIVE_DIR = os.environ.get("RESUME_ARCHIVE_DIR") or "out/passed"
+CN_TZ = ZoneInfo("Asia/Shanghai")          # 「新的一天」按北京时间过 0 点算（不跟机器时区走）
+
+
+def today_cn() -> str:
+    """当天的日期（北京时间）。抽检批次、归档目录都用它，避免机器时区/UTC 导致的跨天错位。"""
+    return datetime.now(CN_TZ).date().isoformat()
 ARCHIVE_TOP = "简历"                              # 通过件归档顶层目录名（子目录按天）
 ARCHIVE_REJECT_TOP = "淘汰"                        # 淘汰件归档顶层目录名（要留证：复看/申诉/复现）
 DEFAULT_WANT = 5                                  # 每天抽几份
@@ -83,7 +90,7 @@ def manual_reject_library(cfg: JobConfig) -> list[dict]:
 def draw(cfg: JobConfig, *, want: int = DEFAULT_WANT, check_date: str | None = None,
          archive_dir: str = DEFAULT_ARCHIVE_DIR) -> dict:
     """生成本日抽检清单。旧批次的未复核项先过期（不累加），再抽 want 份。"""
-    day = check_date or _date.today().isoformat()
+    day = check_date or today_cn()
 
     # 不累加：昨天没看的清单过期，不再出现在待办里
     expired = db.execute(
@@ -172,7 +179,7 @@ def archive_resume(cfg: JobConfig, application_id: int, *, archive_dir: str = DE
     src = meta.get("file_path") or ""
     if not src or not os.path.exists(src):
         return ""                                     # 文件不在了：不阻塞复核，但归档路径留空（报告里能看到）
-    day = day or _date.today().isoformat()
+    day = day or today_cn()
     dest_dir = os.path.join(archive_dir, top, day)
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, meta["file_name"])
@@ -232,7 +239,7 @@ def clear_manual_reject(cfg: JobConfig, application_id: int, *, actor: str = "hr
 # ---------------------------------------------------------------- 统计
 def stats(cfg: JobConfig, *, day: str | None = None) -> dict:
     """池子/清单/复核/误差计数。`today_errors` = 当日抽检里「系统判淘汰但 HR 判该留」的份数。"""
-    day = day or _date.today().isoformat()
+    day = day or today_cn()
     rows = db.fetch_all(
         """SELECT i.state, i.score, d.action AS hr_action, i.score AS s
              FROM spot_check_item i
@@ -264,7 +271,7 @@ def main() -> int:
     ap.add_argument("--job", default="config/job_game_dev.json")
     ap.add_argument("--application", type=int, default=None)
     ap.add_argument("--want", type=int, default=DEFAULT_WANT, help="当日抽检份数（默认 5）")
-    ap.add_argument("--date", default=None, help="指定日期 YYYY-MM-DD（默认今天）")
+    ap.add_argument("--date", default=None, help="指定日期 YYYY-MM-DD（默认按北京时间算的今天）")
     ap.add_argument("--note", default="", help="复核备注（HR 的一句话理由）")
     ap.add_argument("--archive-dir", default=DEFAULT_ARCHIVE_DIR, help="通过件归档根目录")
     ap.add_argument("--json", dest="json_out", action="store_true", help="以 JSON 输出（给脚本/界面用）")

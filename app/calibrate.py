@@ -31,6 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from .contracts import JobConfig                              # noqa: E402
 from .pipeline.replay import decide_with_line, load_rows      # noqa: E402
+from .pipeline.stability import is_ok as stability_is_ok       # noqa: E402
+from .pipeline.stability import latest as stability_latest     # noqa: E402
 from .store import Repository, db                             # noqa: E402
 
 MIN_SAMPLES = 3              # 每组最少几条标注才动线
@@ -54,13 +56,15 @@ def labels(cfg: JobConfig) -> tuple[list[dict], list[dict]]:
 
 
 def choose_line(counts: list[dict]) -> dict | None:
-    """按「漏放优先 → 误放 → 人工负担」挑线（纯函数，便于测试）。
+    """按「漏放优先 → 误放 → 人工负担 → 并列取更高线」挑线（纯函数，便于测试）。
 
+    最后那一项是安全方向：三项相同时，**取更高的线**（少放人进门，多给 HR 留一点活），
+    反过来取最低线会一路滑到"人人自动达标"，那是另一种事故。
     counts 每项：{"line": float, "leak": int, "wrong": int, "manual": int}
     """
     if not counts:
         return None
-    return min(counts, key=lambda c: (c["leak"], c["wrong"], c["manual"], c["line"]))
+    return min(counts, key=lambda c: (c["leak"], c["wrong"], c["manual"], -c["line"]))
 
 
 def sweep(cfg: JobConfig, rows_by_resume: dict[str, dict], pos_ids: set[str], neg_ids: set[str],
@@ -77,7 +81,8 @@ def sweep(cfg: JobConfig, rows_by_resume: dict[str, dict], pos_ids: set[str], ne
                 "pos_scores": [], "neg_scores": []}
 
     scores = [float(r["old"].base_total) for r, _ in samples]
-    lo, hi = min(scores) - LINE_SPAN, max(scores) + LINE_SPAN
+    lo = max(0.0, min(scores) - LINE_SPAN)          # 线不能是负数（挑出过 -5.8 这种没意义的线）
+    hi = max(scores) + LINE_SPAN
     pos_scores = sorted(float(r["old"].base_total) for r, lab in samples if lab == "pos")
     neg_scores = sorted(float(r["old"].base_total) for r, lab in samples if lab == "neg")
     separated = bool(pos_scores and neg_scores and max(neg_scores) < min(pos_scores))
@@ -87,7 +92,9 @@ def sweep(cfg: JobConfig, rows_by_resume: dict[str, dict], pos_ids: set[str], ne
     while line <= hi + 1e-9:
         leak = wrong = manual = 0
         for row, lab in samples:
-            d = decide_with_line(cfg, row, line, band)
+            # gate=False：校准要找的是"判定机制本身"会不会漏放；稳定性闸门是另一层纪律，
+            # 它由下面的「生效前提」把关，不能混进扫描（否则漏放恒为 0，校准失去目标）。
+            d = decide_with_line(cfg, row, line, band, gate=False)
             if lab == "pos" and d == "auto_reject":
                 leak += 1
             elif lab == "neg" and d == "auto_pass":
@@ -148,8 +155,11 @@ def run(job_path: str, *, trigger: str = "manual", band: float | None = None,
     invisible = sorted(labeled_ids - set(rows_by_resume))
     sw = {"candidates": [], "samples": [], "separated": False}
 
+    stable_ok, stable_why = stability_is_ok(stability_latest(cfg.job_id, cfg.config_version))
     if len(pos) < MIN_SAMPLES or len(neg) < MIN_SAMPLES:
         reason = f"样本不足：该留 {len(pos)} 条 / 该淘汰 {len(neg)} 条，各需 ≥{MIN_SAMPLES} 条才动线"
+    elif not stable_ok:
+        reason = f"稳定性未达标，不动线：{stable_why}"
     else:
         sw = sweep(cfg, rows_by_resume, {p["resume_id"] for p in pos}, {n["resume_id"] for n in neg}, band)
         if not sw["separated"]:

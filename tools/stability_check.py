@@ -26,6 +26,8 @@ from app.llm.client import SiliconFlowClient  # noqa: E402
 from app.pipeline.evaluate import evaluate  # noqa: E402
 from app.pipeline.parse import parse_resume  # noqa: E402
 from app.pipeline.rules import decide, rule_layer, sync_decisions_with_evidence  # noqa: E402
+from app.pipeline.stability import record as stability_record                      # noqa: E402
+from app.pipeline.stability import status_text as stability_status_text            # noqa: E402
 from app.pipeline.hard_filters import check_hard_filters  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +71,8 @@ def main() -> int:
     ap.add_argument("--search", nargs="*", default=["local/samples", "local/samples_all",
                     r"C:\Users\user\Desktop\毕设及简历", r"C:\Users\user\Desktop"], help="按文件名找简历的目录")
     ap.add_argument("--out", default="out/stability")
+    ap.add_argument("--record", action="store_true",
+                    help="把结果写进 stability_check 表：**自动淘汰闸门**靠它放行（不写就永远不许自动淘汰）")
     ap.add_argument("--reparse", action="store_true",
                     help="每次重跑都重新解析（默认复用第一次的解析结果，与线上一致：简历只解析一次）")
     a = ap.parse_args()
@@ -150,6 +154,21 @@ def main() -> int:
     for e in results:
         better = "top2_mean" if e["gap_top2"] < e["gap_best"] else "best"
         print(f"  {e['resume']}：best 极差 {e['gap_best']:.1f} → top2_mean 极差 {e['gap_top2']:.1f}（{better} 更稳）")
+
+    if a.record and results:
+        # 闸门看的是「判定一致率」与样本数：这里按所有样本里最差的那份来记（保守）
+        agreement = min(e["verdict_consistency"] for e in results)
+        gap = max(e["gap_best"] for e in results)
+        check_id = stability_record(cfg.job_id, cfg.config_version, n_samples=len(results),
+                                   agreement=agreement, score_range=gap,
+                                   detail={"accept_gap": ACCEPT_GAP, "repeat": a.repeat,
+                                           "model": a.model,
+                                           "per_resume": {e["resume"]: {"consistency": e["verdict_consistency"],
+                                                                        "gap": e["gap_best"]}
+                                                          for e in results}})
+        print(f"\n已记录稳定性：check_id={check_id} · 判定一致率 {agreement:.0%}（取最差样本）· "
+              f"样本 {len(results)} 份 · 极差 {gap:.1f}")
+        print(f"闸门状态：{stability_status_text(cfg.job_id, cfg.config_version)}")
 
     os.makedirs(os.path.join(ROOT, a.out), exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

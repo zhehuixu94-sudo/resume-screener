@@ -34,6 +34,14 @@ def test_choose_line_then_fewer_wrong_then_less_manual() -> None:
     assert choose_line(counts)["line"] == 44.0, "同为 0 漏放 0 误放时，选人工负担小的那条"
 
 
+def test_choose_line_tie_prefers_higher_line() -> None:
+    """三项全平时取更高的线（保守方向）：反过来会一路滑向"人人自动达标"。"""
+    counts = [{"line": 12.0, "leak": 0, "wrong": 0, "manual": 8},
+              {"line": 34.0, "leak": 0, "wrong": 0, "manual": 8},
+              {"line": 26.0, "leak": 0, "wrong": 0, "manual": 8}]
+    assert choose_line(counts)["line"] == 34.0
+
+
 def test_choose_line_empty() -> None:
     assert choose_line([]) is None
 

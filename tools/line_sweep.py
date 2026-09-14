@@ -31,11 +31,16 @@ def main() -> int:
     ap.add_argument("--job", required=True)
     ap.add_argument("--lines", default="24,26,28,30,32,34,36,38,40,45,50")
     ap.add_argument("--band", type=float, default=5.0)
+    ap.add_argument("--ignore-gate", action="store_true",
+                    help="绕过稳定性闸门看'纯口径效果'——只在验证算法时用；线上判定有这道闸门")
     ap.add_argument("--from-version", default=None,
                     help="用哪个 config_version 的落库模型输出扫描（默认当前配置版本）")
     a = ap.parse_args()
 
     cfg = JobConfig.model_validate(json.load(open(a.job, encoding="utf-8")))
+    if a.ignore_gate:
+        print("⚠️  已绕过稳定性闸门（--ignore-gate）：下面是'纯口径效果'，线上判定会拦住 auto_reject，"
+              "直到稳定性测量达标（tools/stability_check.py --record）\n")
     rows = load_rows(cfg, a.from_version)
     if not rows:
         print(f"{cfg.job_id}@{(a.from_version or cfg.config_version)} 没有可用的评估结果（先跑一遍 run）")
@@ -55,7 +60,7 @@ def main() -> int:
     print("-" * 62)
     rows_by_line = {}
     for line in lines:
-        decisions = [decide_with_line(cfg, r, line, a.band) for r in rows]
+        decisions = [decide_with_line(cfg, r, line, a.band, gate=not a.ignore_gate) for r in rows]
         ap_ = sum(1 for d in decisions if d == "auto_pass")
         mr = sum(1 for d in decisions if d == "manual_review")
         ar = sum(1 for d in decisions if d == "auto_reject")
@@ -68,8 +73,8 @@ def main() -> int:
     print("\n【策略对比】reject_border_when_low（模型判边缘且分数低于线−band 时是否自动淘汰）：")
     print(f"{'线':>5} {'关：达标/人工/淘汰':>26} {'开：达标/人工/淘汰':>26}")
     for line in lines:
-        off = [decide_with_line(cfg, r, line, a.band, False) for r in rows]
-        on = [decide_with_line(cfg, r, line, a.band, True) for r in rows]
+        off = [decide_with_line(cfg, r, line, a.band, False, gate=not a.ignore_gate) for r in rows]
+        on = [decide_with_line(cfg, r, line, a.band, True, gate=not a.ignore_gate) for r in rows]
         f = lambda ds: (sum(1 for d in ds if d == "auto_pass"), sum(1 for d in ds if d == "manual_review"),
                         sum(1 for d in ds if d == "auto_reject"))
         print(f"{line:>5.0f} {str(f(off)):>26} {str(f(on)):>26}")

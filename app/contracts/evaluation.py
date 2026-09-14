@@ -124,6 +124,7 @@ ConflictType = Literal[
     "unanchored_evidence",  # 存在锚定失败的证据
     "edge_band",            # 落在达标线 ±band 之内
     "edge_band_low_reject",  # 模型判边缘但分数低于线−band，按岗位策略自动淘汰（reject_border_when_low）
+    "stability_gate",       # 稳定性未达标（同一输入重复跑判定会漂）→ 不许自动淘汰，降级为转人工
 ]
 
 

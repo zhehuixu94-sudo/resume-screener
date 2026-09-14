@@ -247,3 +247,20 @@ CREATE TABLE IF NOT EXISTS basic_item_label (
     UNIQUE (application_id, item_key)
 );
 CREATE INDEX IF NOT EXISTS idx_basic_item_job ON basic_item_label (job_id, dimension);
+
+-- ---------------------------------------------------------------- 稳定性测量（自动淘汰的闸门依据）
+-- 同一份解析重复标注 N 次，看判定一致率与总分极差。没有这张表的合格记录时，
+-- 判定层会把 auto_reject 降级为 manual_review（见 app/pipeline/stability.py）。
+CREATE TABLE IF NOT EXISTS stability_check (
+    check_id       BIGSERIAL PRIMARY KEY,
+    company_id     TEXT NOT NULL DEFAULT 'local',
+    job_id         TEXT NOT NULL,
+    config_version TEXT NOT NULL,
+    method         TEXT NOT NULL DEFAULT 'repeat_label',
+    n_samples      INT  NOT NULL,
+    agreement      REAL NOT NULL,               -- 判定一致率（0~1）
+    score_range    REAL NOT NULL DEFAULT 0,     -- 同一样本重复跑的总分极差（越小越稳）
+    detail         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_stability_job ON stability_check (job_id, config_version, created_at DESC);
