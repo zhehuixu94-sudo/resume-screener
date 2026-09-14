@@ -4,6 +4,56 @@
   "title": "ResumeParse",
   "description": "偏移由代码锚定，模型只给原文片段；未锚定的证据不可高亮、不可作自动淘汰依据。",
   "$defs": {
+    "Achievement": {
+      "additionalProperties": false,
+      "description": "量化成就（与能力项无关的原句 + 锚定结果）。\n\n单独建通道的原因：能力项抽取要求\"≤60 字连续片段\"，会把\n\"发现并协助处理3处安全隐患；故障响应缩短至30分钟内；录入数据3000余条\"\n这种分号拼接的量化长句切碎，只留下不含数字的短句——实测真实简历抽出的 7 条证据片段里\n**一个数字都没有**，而\"具体性\"信号完全依赖片段里有没有数字 → 输入被掏空。",
+      "properties": {
+        "achievement_id": {
+          "minLength": 1,
+          "title": "Achievement Id",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 4,
+          "title": "Text",
+          "type": "string"
+        },
+        "kind": {
+          "default": "产出",
+          "title": "Kind",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        },
+        "span": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span"
+        },
+        "anchored": {
+          "default": false,
+          "title": "Anchored",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "achievement_id",
+        "text"
+      ],
+      "title": "Achievement",
+      "type": "object"
+    },
     "Anchoring": {
       "additionalProperties": false,
       "description": "原文片段是怎么落到偏移上的。method=none 表示锚定失败（证据不可高亮、不可作自动淘汰依据）。",
@@ -272,6 +322,21 @@
     "ParseStats": {
       "additionalProperties": false,
       "properties": {
+        "achievements": {
+          "default": 0,
+          "title": "Achievements",
+          "type": "integer"
+        },
+        "achievements_anchored": {
+          "default": 0,
+          "title": "Achievements Anchored",
+          "type": "integer"
+        },
+        "achievements_evidence": {
+          "default": 0,
+          "title": "Achievements Evidence",
+          "type": "integer"
+        },
         "blocks": {
           "minimum": 0,
           "title": "Blocks",
@@ -754,6 +819,13 @@
         "$ref": "#/$defs/EvidenceSpan"
       },
       "title": "Evidence",
+      "type": "array"
+    },
+    "achievements": {
+      "items": {
+        "$ref": "#/$defs/Achievement"
+      },
+      "title": "Achievements",
       "type": "array"
     },
     "stats": {

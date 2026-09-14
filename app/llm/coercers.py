@@ -100,6 +100,24 @@ def coerce_parse(data: dict[str, Any], job: Any = None) -> CoerceResult:
         blocks_out.append(block)
     data["blocks"] = blocks_out
 
+    # 量化成就通道：与能力项无关，专门保留带数字/成果的原句（信号要用）
+    ach_out = []
+    for ai, a in enumerate(data.get("achievements") or []):
+        if not isinstance(a, dict):
+            continue
+        tx = collapse_ws(str(a.get("text") or ""))
+        if len(tx) < MIN_EVIDENCE:
+            repairs.append(f"achievements[{ai}]: text 过短（{len(tx)} 字）→ 丢弃")
+            continue
+        if len(tx) > 120:
+            tx = tx[:120]
+            repairs.append(f"achievements[{ai}]: text 超长 → 截断到 120 字")
+        kind = str(a.get("kind") or "产出")
+        if kind not in ("职责", "产出", "量化"):
+            kind = "产出"
+        ach_out.append({"text": tx, "kind": kind, "note": str(a.get("note") or "")})
+    data["achievements"] = ach_out
+
     pq = data.get("parse_quality") or {}
     sections = [str(s) for s in (pq.get("sections_found") or []) if str(s).strip()]
     if not sections:

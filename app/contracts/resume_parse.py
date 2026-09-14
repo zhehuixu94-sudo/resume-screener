@@ -45,12 +45,31 @@ class ParsedItem(Strict):
 
 
 class ParseStats(Strict):
+    achievements: int = 0
+    achievements_anchored: int = 0
+    achievements_evidence: int = 0
     blocks: int = Field(ge=0)
     items: int = Field(ge=0)
     evidence_total: int = Field(ge=0)
     evidence_anchored: int = Field(ge=0)
     evidence_unanchored: int = Field(ge=0)
     evidence_coverage: float = Field(ge=0.0, le=1.0, description="anchored / items，即报告里『证据可点开』的达标率")
+
+
+class Achievement(Strict):
+    """量化成就（与能力项无关的原句 + 锚定结果）。
+
+    单独建通道的原因：能力项抽取要求"≤60 字连续片段"，会把
+    "发现并协助处理3处安全隐患；故障响应缩短至30分钟内；录入数据3000余条"
+    这种分号拼接的量化长句切碎，只留下不含数字的短句——实测真实简历抽出的 7 条证据片段里
+    **一个数字都没有**，而"具体性"信号完全依赖片段里有没有数字 → 输入被掏空。
+    """
+    achievement_id: str = Field(min_length=1)
+    text: str = Field(min_length=4)
+    kind: str = "产出"
+    note: str = ""
+    span: dict | None = None
+    anchored: bool = False
 
 
 class ResumeParse(Strict):
@@ -62,6 +81,7 @@ class ResumeParse(Strict):
     blocks: list[Block] = Field(min_length=1)
     items: list[ParsedItem] = Field(min_length=1)
     evidence: list[EvidenceSpan] = Field(default_factory=list)
+    achievements: list[Achievement] = Field(default_factory=list)
     stats: ParseStats
     text: str = Field(description="规范化后的简历文本（报告/高亮用；原文另存加密列）")
     llm: StageMeta

@@ -92,3 +92,63 @@ def is_high_confidence_fluff(signals: dict, *, min_spans: int = 8, fluff_at: flo
     return (signals.get("n_spans", 0) >= min_spans
             and signals.get("fluff_rate", 0.0) >= fluff_at
             and signals.get("number_rate", 0.0) <= number_at)
+
+
+# ————————————————————————————————————————————————————————————————
+# 分位口径：绝对阈值（0.787 这种）是拿构造语料定的，搬到真实数据上不一定对得上。
+# 真实数据该用**本批分位**：无论大家绝对水平多高，永远挑出"相对最水"的那批，
+# 且只惩罚尾部（不惩罚大多数正常人）。实测真实简历空话率 0.06~0.23，与注水型 0.787 差一个量级，
+# 所以分位口径与绝对口径在"极端注水"上结论一致，但对"整体偏水的一批简历"更稳健。
+# ————————————————————————————————————————————————————————————————
+SUSPECT_TAIL = 0.10          # 尾部 10%：疑似注水（扣分）
+HIGH_CONF_TAIL = 0.02        # 尾部 2%：高置信（标记待定、转人工；**不自动淘汰**）
+
+
+def batch_percentiles(signals_by_key: dict[str, dict], *, by: str = "fluff_rate") -> dict[str, float]:
+    """把一批简历的某个信号映射到 0~1 分位（并列取平均位置，避免按文件名顺序发分）。"""
+    vals = {k: float(v.get(by, 0.0) or 0.0) for k, v in signals_by_key.items()}
+    if not vals:
+        return {}
+    if len(vals) == 1:
+        return {next(iter(vals)): 0.5}
+    order = sorted(vals, key=lambda k: vals[k])
+    n = len(order) - 1
+    out: dict[str, float] = {}
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and vals[order[j + 1]] == vals[order[i]]:
+            j += 1
+        avg = ((i + j) / 2) / n if n else 0.5
+        for k in order[i:j + 1]:
+            out[k] = avg
+        i = j + 1
+    return out
+
+
+def quantile_penalty(percentile: float, *, cap: float = 30.0, tail: float = SUSPECT_TAIL) -> float:
+    """只惩罚尾部：分位 < 1−tail 的不扣分；尾部线性升到 cap。
+
+    这样"扣分"永远只落在本批最水的那批人身上——绝对水平整体偏高或偏低都不影响判定，
+    比"空话率 > 0.5 就扣 30 分"这种硬阈值稳健。
+    """
+    cut = 1.0 - tail
+    if percentile <= cut:
+        return 0.0
+    ramp = max(0.0, min(1.0, (percentile - cut) / tail))
+    return round(ramp * cap, 2)          # 取两位小数：避免 (1.0-0.9)/0.1 这类浮点残渣进总分
+
+
+def quantile_flags(signals_by_key: dict[str, dict], *, suspect_tail: float = SUSPECT_TAIL,
+                   high_conf_tail: float = HIGH_CONF_TAIL,
+                   by: str = "fluff_rate") -> dict[str, dict]:
+    """按本批分位给每份简历打标：percentile / suspect（疑似注水）/ high_confidence（待定+人工）。
+
+    注意 high_confidence 的语义在"降级策略"下是**标记转人工**，不是自动淘汰。
+    """
+    pct = batch_percentiles(signals_by_key, by=by)
+    out = {}
+    for k, p in pct.items():
+        out[k] = {"percentile": round(p, 4), "suspect": p > 1.0 - suspect_tail,
+                  "high_confidence": p > 1.0 - high_conf_tail}
+    return out

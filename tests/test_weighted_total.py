@@ -9,7 +9,8 @@
 """
 from __future__ import annotations
 
-from app.pipeline.honesty import (honesty_penalty, is_fluff, is_high_confidence_fluff,
+from app.pipeline.honesty import (batch_percentiles, honesty_penalty, is_fluff,
+                                  is_high_confidence_fluff, quantile_flags, quantile_penalty,
                                   resume_signals, span_concreteness)
 from app.pipeline.weighted_total import (base_points, bonus_raw, percentile_rank, score_batch,
                                          total_score)
@@ -101,3 +102,41 @@ def test_score_batch_end_to_end() -> None:
     assert res["g"]["bonus_raw"] == res["f"]["bonus_raw"]           # 打分相同
     assert res["g"]["penalty"] == 3.0 and res["f"]["penalty"] == 27.0
     assert res["g"]["total"] > res["f"]["total"]                    # 靠注水扣分拉开
+
+
+# ————— 分位口径（真实数据标定用：绝对阈值是拿构造语料定的，搬到真实数据会错位）—————
+
+
+def test_batch_percentiles_monotone_and_tie_stable() -> None:
+    sig = {"low": {"fluff_rate": 0.0}, "mid": {"fluff_rate": 0.5},
+           "also_mid": {"fluff_rate": 0.5}, "high": {"fluff_rate": 0.9}}
+    p = batch_percentiles(sig)
+    assert p["low"] == 0.0 and p["high"] == 1.0
+    assert p["mid"] == p["also_mid"] == (1 + 2) / 2 / 3      # 并列同分位
+    assert batch_percentiles({}) == {}
+    assert batch_percentiles({"only": {"fluff_rate": 0.4}}) == {"only": 0.5}
+
+
+def test_quantile_penalty_only_punishes_the_tail() -> None:
+    assert quantile_penalty(0.0) == 0.0
+    assert quantile_penalty(0.5) == 0.0
+    assert quantile_penalty(0.90) == 0.0                     # 尾部起点不扣
+    assert abs(quantile_penalty(0.95) - 15.0) < 1e-9         # 尾部中点 → 一半
+    assert quantile_penalty(1.0) == 30.0                     # 最水 → 满扣
+    assert abs(quantile_penalty(0.95, cap=20) - 10.0) < 1e-6      # 浮点：0.95−0.9 不精确
+
+
+def test_quantile_flags_mark_only_top_tails() -> None:
+    sig = {f"r{i}": {"fluff_rate": i / 99} for i in range(100)}     # 0.00 ~ 0.99
+    fl = quantile_flags(sig)
+    assert sum(1 for v in fl.values() if v["high_confidence"]) <= 2
+    assert 8 <= sum(1 for v in fl.values() if v["suspect"]) <= 12   # 约 10%
+    assert fl["r0"]["suspect"] is False and fl["r99"]["high_confidence"] is True
+
+
+def test_quantile_is_scale_invariant() -> None:
+    """整体都水的一批 vs 整体都干的一批：分位口径挑出的是同一批人（相对位置），绝对阈值做不到。"""
+    dry = {"a": {"fluff_rate": 0.01}, "b": {"fluff_rate": 0.02}, "c": {"fluff_rate": 0.30}}
+    wet = {"a": {"fluff_rate": 0.50}, "b": {"fluff_rate": 0.52}, "c": {"fluff_rate": 0.90}}
+    assert [quantile_penalty(batch_percentiles(d)[k]) > 0 for d in (dry, wet) for k in ("a", "b", "c")] == \
+        [False, False, True] * 2

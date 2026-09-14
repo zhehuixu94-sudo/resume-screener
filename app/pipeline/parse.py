@@ -14,7 +14,7 @@ from ..contracts.common import (
 )
 from ..contracts.job_config import JobConfig
 from ..contracts.llm_outputs import LlmParseOutput
-from ..contracts.resume_parse import Block, ParseStats, ParsedItem, ResumeParse
+from ..contracts.resume_parse import Achievement, Block, ParseStats, ParsedItem, ResumeParse
 from ..llm.client import SiliconFlowClient
 from ..llm.coercers import coerce_parse
 from ..llm.prompts import PROMPT_VERSION, SYS_PARSE, TPL_PARSE, hash_of
@@ -88,10 +88,34 @@ def parse_resume(path: str, job: JobConfig, client: SiliconFlowClient, *, model:
             item_ids.append(iid)
         blocks.append(Block(block_id=bid, section=b.section, title=b.title, period=b.period, item_ids=item_ids))
 
-    anchored = sum(1 for e in evidence if e.anchored)
-    stats = ParseStats(blocks=len(blocks), items=len(items), evidence_total=len(evidence),
-                       evidence_anchored=anchored, evidence_unanchored=len(evidence) - anchored,
-                       evidence_coverage=round(anchored / max(1, len(items)), 3))
+    # —— 量化成就：单独锚定，并镜像到 evidence（item_id 用哨兵 __ach__，便于信号按同样口径读表）
+    achievements: list[Achievement] = []
+    for ai, a in enumerate(getattr(result.obj, "achievements", []) or [], start=1):
+        aa = anchor(a.text, norm)
+        sp = aa.span
+        raw = None
+        if sp:
+            rs, re_ = norm.raw_range(sp.start, sp.end)
+            raw = CharRange(start=rs, end=re_)
+        achievements.append(Achievement(
+            achievement_id=f"ach{ai}", text=a.text, kind=a.kind, note=a.note,
+            span={"start": sp.start, "end": sp.end} if sp else None, anchored=sp is not None))
+        if sp:                                            # 只把锚定成功的镜像进证据表
+            n_ev += 1
+            evidence.append(EvidenceSpan(
+                span_id=_span_id(n_ev), item_id="__ach__", text=a.text, span=sp, raw_range=raw,
+                block_title="量化成就", anchoring=aa.anchoring, alt_spans=aa.alt_spans))
+
+    # 覆盖率只统计"能力项证据"：量化成就也镜像进了 evidence，混在一起算会让覆盖率 >1
+    item_evidence = [e for e in evidence if e.item_id != "__ach__"]
+    ach_evidence = [e for e in evidence if e.item_id == "__ach__"]
+    anchored = sum(1 for e in item_evidence if e.anchored)
+    stats = ParseStats(blocks=len(blocks), items=len(items), evidence_total=len(item_evidence),
+                       evidence_anchored=anchored, evidence_unanchored=len(item_evidence) - anchored,
+                       evidence_coverage=round(anchored / max(1, len(items)), 3),
+                       achievements=len(achievements),
+                       achievements_anchored=sum(1 for a in achievements if a.anchored),
+                       achievements_evidence=len(ach_evidence))
 
     parse = ResumeParse(
         resume_id=sha256_file(path)[:16],
@@ -101,6 +125,7 @@ def parse_resume(path: str, job: JobConfig, client: SiliconFlowClient, *, model:
         normalization=Normalization(ops=norm.ops, raw_char_count=len(norm.raw), norm_char_count=len(norm.text),
                                    raw_sha256=norm.raw_sha256, norm_sha256=norm.norm_sha256,
                                    map_sha256=norm.map_sha256),
-        quality=quality, blocks=blocks, items=items, evidence=evidence, stats=stats,
+        quality=quality, blocks=blocks, items=items, evidence=evidence,
+        achievements=achievements, stats=stats,
         text=norm.text, llm=result.meta)
     return ParseOutcome(parse=parse, result=result, normalized=norm)

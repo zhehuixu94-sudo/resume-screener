@@ -55,7 +55,8 @@ def enqueue(job: JobConfig, paths: list[str], repo: Repository) -> int:
         db.execute(
             """INSERT INTO resume (resume_id, company_id, file_name, file_path, file_sha256, file_format)
                VALUES (%s, %s, %s, %s, %s, %s)
-               ON CONFLICT (resume_id) DO UPDATE SET file_path = EXCLUDED.file_path""",
+               ON CONFLICT (resume_id) DO UPDATE
+                   SET file_path = EXCLUDED.file_path, file_name = EXCLUDED.file_name""",
             (resume_id, repo.company_id, os.path.basename(path), os.path.abspath(path), sha, ext.lstrip(".")))
         repo.ensure_application(resume_id, job)
         added += 1

@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .common import AnchorLevel, Difficulty, FitVerdict, QLevel, Relevance, Tolerant, Verdict
@@ -34,9 +36,23 @@ class LlmParseQuality(Tolerant):
     issues: list[str] = Field(default_factory=list)
 
 
+class LlmAchievement(Tolerant):
+    """量化成就：**与能力项无关**的一条职责/产出原句，必须保留数字、时间、成果词。
+
+    为什么单开一条通道：能力项抽取是"为某个能力找一句 ≤60 字连续片段"，会把
+    "发现并协助处理3处安全隐患…；故障响应缩短至30分钟内；录入数据3000余条"这种
+    分号拼接的量化长句切碎，只留下不含数字的短句（实测真实简历抽出的 7 条证据片段里
+    **一个数字都没有**）。而"具体性"信号完全依赖片段里有没有数字 → 输入被掏空。
+    """
+    text: str = Field(min_length=4, description="原文**连续**片段，≤120 字，必须原样保留其中的数字/比例/时长")
+    kind: Literal["职责", "产出", "量化"] = "产出"
+    note: str = ""
+
+
 class LlmParseOutput(Tolerant):
     blocks: list[LlmParseBlock] = Field(min_length=1)
     parse_quality: LlmParseQuality
+    achievements: list[LlmAchievement] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------- ② 标注

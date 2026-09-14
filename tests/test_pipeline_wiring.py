@@ -103,3 +103,13 @@ def test_取证条目进了标注池并带上证据():
     assert any(c.span_id.startswith("evc_") for c in ev.cited_evidence), \
         "取证阶段的证据没有进入引用池（报告里会点不开）"
     assert any(not c.anchored for c in ev.cited_evidence) is not None
+
+
+def test_parse_coverage_excludes_achievements() -> None:
+    """量化成就镜像进 evidence 后，能力项覆盖率不能因此 >1（曾经直接抛 ValidationError）。"""
+    from app.contracts.resume_parse import ParseStats
+    st = ParseStats(blocks=1, items=4, evidence_total=4, evidence_anchored=4, evidence_unanchored=0,
+                    evidence_coverage=1.0, achievements=9, achievements_anchored=9,
+                    achievements_evidence=9)
+    assert st.evidence_coverage == 1.0 and st.evidence_total == 4      # 成就段不计入能力项分母
+    assert st.achievements_evidence == 9
