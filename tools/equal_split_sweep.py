@@ -36,6 +36,8 @@ def main() -> int:
     ap.add_argument("--ignore-gate", action="store_true",
                     help="绕过稳定性闸门看'纯口径效果'——只在验证算法时用；线上判定有这道闸门")
     ap.add_argument("--from-version", default=None, help="用哪个版本的落库模型输出（默认当前）")
+    ap.add_argument("--label-only", action="store_true",
+                    help="忽略模型给的连续值，只用 强/中/弱·高/中/低 标签换算（同数据的对照口径）")
     ap.add_argument("--budget", type=float, default=60.0, help="及格总分（默认 60）")
     ap.add_argument("--band", type=float, default=5.0)
     ap.add_argument("--lines", default="", help="候选线（逗号分隔）；留空 = 自动覆盖分布范围")

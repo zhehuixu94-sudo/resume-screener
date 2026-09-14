@@ -36,12 +36,19 @@ def basic_items_of(job: JobConfig) -> list[str]:
     return [d.id for d in job.dimensions if d.weight > 0]
 
 
-def item_quality(i: dict) -> tuple[float, float, float]:
-    """一条证据项的（相似度分、难度分、质量=两者之积）。连续值优先，缺了按标签兜底。"""
-    rel = i.get("relevance_score")
+def item_quality(i: dict, *, use_continuous: bool = True) -> tuple[float, float, float]:
+    """一条证据项的（相似度分、难度分、质量=两者之积）。
+
+    use_continuous=False 时**忽略模型给的连续值**、只用 强/中/弱 · 高/中/低 标签换算 ——
+    用来在同一批模型输出上做"三档换算 vs 连续值"的对照，不受模型波动干扰。
+    """
+    if use_continuous:
+        rel = i.get("relevance_score")
+        diff = i.get("difficulty_score")
+    else:
+        rel = diff = None
     if rel is None:
         rel = RELEVANCE_SCORE.get(i.get("relevance"), 0.0)
-    diff = i.get("difficulty_score")
     if diff is None:
         diff = DIFFICULTY_SCORE.get(i.get("difficulty"), 1.0)
     rel = min(max(float(rel), 0.0), 1.0)
@@ -51,11 +58,16 @@ def item_quality(i: dict) -> tuple[float, float, float]:
 
 def equal_split_outcome(job: JobConfig, labeled: list[dict], *, budget: float = DEFAULT_BUDGET,
                         basic_items: list[str] | None = None, aggregation: str = "best",
-                        quality_cap: float = MAX_QUALITY) -> RuleOutcome:
+                        quality_cap: float = MAX_QUALITY, use_continuous: bool = True,
+                        quality_baseline: float | None = None) -> RuleOutcome:
     """等分制算分：返回与 rule_layer 同构的 RuleOutcome（可直接喂 decide()）。
 
     质量 = 相似度分 × 难度分，基准（强 × 中）= 1.0；**不顶格截断**（上限 1.5），
     这样才能把"高难度经历"和"中等难度"区分开——截断会把上限压回 1.0，分数重新挤成一团。
+
+    quality_baseline：把质量归一化的除数。模型实测的"强×中"中位只有 ~0.77（不是理想的 1.0），
+    传它就能把"实际上的满足"拉回 1.0，让 60 分重新等于"刚好满足全部及格项"。
+    不传 = 不归一（基准取理论的 1.0）。
     """
     basics = basic_items or basic_items_of(job)
     n = len(basics) or 1
@@ -65,7 +77,7 @@ def equal_split_outcome(job: JobConfig, labeled: list[dict], *, budget: float = 
     rows: dict[str, list[DimensionItemScore]] = {b: [] for b in basics}
     unmapped: list[UnmappedItem] = []
     for i in labeled:
-        rel_c, diff_c, quality = item_quality(i)
+        rel_c, diff_c, quality = item_quality(i, use_continuous=use_continuous)
         rec = DimensionItemScore(
             item_id=i["item_id"], capability=i.get("capability") or "",
             relevance=i.get("relevance") or "无关", difficulty=i.get("difficulty") or "低",
@@ -85,8 +97,9 @@ def equal_split_outcome(job: JobConfig, labeled: list[dict], *, budget: float = 
         d = by_id.get(dim_id)
         items = rows[dim_id]
         # 该维度最强项的"质量"（已含相似度与难度）；没有证据 = 0 分（不是"缺省满分"）
-        quality = min(_aggregate([x.raw for x in items], aggregation), quality_cap)
-        points = round(per * quality, 2)
+        quality = min(_aggregate([x.raw for x in items], aggregation), quality_cap)   # 原始满足程度
+        factor = (quality / quality_baseline) if quality_baseline else quality
+        points = round(per * factor, 2)
         total += points
         best = max(items, key=lambda x: x.raw, default=None)
         dims.append(DimensionScore(

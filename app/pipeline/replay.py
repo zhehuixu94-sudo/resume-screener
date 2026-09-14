@@ -81,7 +81,7 @@ def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
 
 def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float, *,
                             budget: float = 60.0, basic_items: list[str] | None = None,
-                            aggregation: str = "best",
+                            aggregation: str = "best", use_continuous: bool = True, quality_baseline: float | None = None,
                             reject_border_when_low: bool | None = None, gate: bool = True) -> str:
     """按**等分制**算分 + 指定达标线重算处置（离线，0 token）。
 
@@ -93,7 +93,8 @@ def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float,
         upd["reject_border_when_low"] = reject_border_when_low
     cfg2 = cfg.model_copy(update={"scoring": cfg.scoring.model_copy(update=upd)})
     rules = equal_split_outcome(cfg2, row["labeled"], budget=budget, basic_items=basic_items,
-                                aggregation=aggregation)
+                                aggregation=aggregation, use_continuous=use_continuous,
+                                quality_baseline=quality_baseline)
     parse, old = row["parse"], row["old"]
     bonus = bonus_layer(cfg2, parse, row["labeled"])
     hard = check_hard_filters(cfg2, parse, old.llm_compare)
