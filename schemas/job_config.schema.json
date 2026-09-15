@@ -325,6 +325,14 @@
           "title": "Labeling Repeats",
           "type": "integer"
         },
+        "compare_repeats": {
+          "default": 1,
+          "description": "整体判定阶段的重复次数：>1 时对「达标/边缘/不达标」取多数票。实测：分数锁定后（极差 0.0），整体判定仍在达标/边缘之间跳 → 3 次里翻 1 次就把自动处置翻成转人工，稳定性一致率卡在 0.67。成本是整体判定多调 2 次",
+          "maximum": 9,
+          "minimum": 1,
+          "title": "Compare Repeats",
+          "type": "integer"
+        },
         "fallback_keyword_mapping": {
           "default": true,
           "description": "模型没给维度时是否用维度 keywords 兜底归类",

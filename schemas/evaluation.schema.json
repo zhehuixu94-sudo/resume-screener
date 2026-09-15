@@ -912,6 +912,13 @@
           ],
           "title": "Gate Score Field",
           "type": "string"
+        },
+        "compare_repeats": {
+          "default": 1,
+          "description": "整体判定重复次数（>1 时取多数票）——判定参数，必须记下来才能复现历史处置",
+          "minimum": 1,
+          "title": "Compare Repeats",
+          "type": "integer"
         }
       },
       "required": [

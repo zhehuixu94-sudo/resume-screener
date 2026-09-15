@@ -151,6 +151,8 @@ class ScoringSnapshot(Strict):
     confidence_floor: float
     config_version: str
     gate_score_field: Literal["base_total", "gate_score"] = "gate_score"
+    compare_repeats: int = Field(default=1, ge=1,
+        description="整体判定重复次数（>1 时取多数票）——判定参数，必须记下来才能复现历史处置")
 
 
 class ScoreParts(Strict):

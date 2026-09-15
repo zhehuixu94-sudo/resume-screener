@@ -175,6 +175,30 @@ def _parse_label_payload(res, by_idx: dict, parse: ResumeParse, flat: list[dict]
     return labeled
 
 
+def _merge_compare_runs(runs: list) -> object:
+    """多次「整体判定」取**多数票**（verdict 众数 + 与中位置信度最接近的那一轮）。
+
+    为什么：分数是代码算的、可以做到极差 0；整体判定是模型说的，同一份简历三次会在
+    达标/边缘之间跳。3 次里翻 1 次，处置就从 auto_pass 变 manual_review——稳定性一致率卡在 0.67，
+    闸门（要求 ≥0.8）永远过不去。多数票是唯一能压住"模型口径抖动"的手段。
+
+    并列取字典序、置信度并列取 trace_id，保证**同一批数据每次合并结果一致**。
+    有效轮次不到一半时视为该阶段失败（返回第一轮，让降级路径接管，不许拿少数派当结论）。
+    """
+    valid = [r for r in runs if r.obj is not None]
+    if not valid:
+        return runs[0]
+    if len(valid) * 2 < len(runs) + 1:          # 有效轮次 < 半数
+        return next(r for r in runs if r.obj is None)
+    counts = Counter(r.obj.verdict for r in valid)
+    top = counts.most_common()
+    winner = sorted(v for v, c in top if c == top[0][1])[0]
+    same = [r for r in valid if r.obj.verdict == winner]
+    confs = sorted(r.obj.confidence for r in same)
+    median = confs[len(confs) // 2]
+    return min(same, key=lambda r: (abs(r.obj.confidence - median), (r.meta.trace_ids or [""])[-1]))
+
+
 def questions_skip_reason(hard: list[HardFilterResult], compare_data: dict | None) -> tuple[str, list[str]]:
     """面试题是否跳过：**只看规则层的门槛结论**，返回 (跳过原因, 备注)。
 
@@ -220,17 +244,23 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                                    span_map=span_map)
     label_res_status = label_meta.validation.status
 
-    # ---------------------------------------------------------- ③ 整体判定
+    # ---------------------------------------------------------- ③ 整体判定（可重复 + 多数票）
+    # 为什么重复：实测分数已经锁死（同一份简历三次极差 0.0），但「整体判定」仍在达标/边缘之间跳；
+    # 3 次里翻 1 次 → 处置从 auto_pass 变 manual_review → 稳定性一致率卡在 0.67（闸门 0.8 过不去）。
+    # 分数是代码算的、判定是模型说的——模型的抖动只能用多数票压。
     veto_lines = "\n".join(f"  - [{f.id}] {f.name}：{f.rule}" for f in job.hard_filters) or "  （无硬门槛）"
     anchors = job.anchor_prompt()
     compare_user = TPL_COMPARE.format(job_title=job.job_title, jd=job.jd, veto=veto_lines,
                                       good=anchors.get("合格", "-"), border=anchors.get("边缘", "-"),
                                       bad=anchors.get("不达标", "-"), items=render_items(labeled))
-    compare_res = call_structured(client, stage="compare", system=SYS_COMPARE, user=compare_user,
-                                  model_cls=LlmCompareOutput, coercer=coerce_compare, job=job,
-                                  prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_COMPARE, TPL_COMPARE),
-                                  config_version=job.config_version, model=model, max_tokens=4000,
-                                  temperature=temperature)
+    n_compare = max(1, getattr(job.scoring, "compare_repeats", 1))
+    compare_runs = [call_structured(client, stage="compare", system=SYS_COMPARE, user=compare_user,
+                                    model_cls=LlmCompareOutput, coercer=coerce_compare, job=job,
+                                    prompt_version=PROMPT_VERSION, prompt_hash=hash_of(SYS_COMPARE, TPL_COMPARE),
+                                    config_version=job.config_version, model=model, max_tokens=4000,
+                                    temperature=temperature)
+                    for _ in range(n_compare)]
+    compare_res = _merge_compare_runs(compare_runs)
 
     # ---------------------------------------------------------- ④ 匹配度
     fit_user = TPL_FIT.format(job_title=job.job_title, jd=job.jd,
@@ -350,6 +380,7 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
             aggregation=sc.dimension_aggregation, pass_line=sc.pass_line, pass_line_source=sc.pass_line_source,
             band_width=sc.band_width, pass_threshold=sc.pass_line + sc.band_width,
             reject_threshold=sc.pass_line - sc.band_width, confidence_floor=sc.confidence_floor,
+            compare_repeats=n_compare,
             config_version=job.config_version),
         quality=EvalQuality(gate_passed=parse.quality.gate_passed, issues=parse.quality.issues,
                             evidence_coverage=parse.stats.evidence_coverage,
