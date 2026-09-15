@@ -30,7 +30,7 @@ def test_多数票压住单次翻转() -> None:
 def test_全部一致时保持原判定() -> None:
     merged = _merge_compare_runs([_run("达标", 0.9), _run("达标", 0.95), _run("达标", 0.8)])
     assert merged.obj.verdict == "达标"
-    assert merged.obj.confidence == 0.9, "应取与中位置信度最接近的那一轮（0.9）"
+    assert merged.obj.confidence == 0.8, "并列候选里取置信度更低的那一轮（更保守，用户口径）"
 
 
 def test_合并结果确定() -> None:

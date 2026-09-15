@@ -22,6 +22,7 @@ from ..contracts.evaluation import (
     EvalStages,
     ScoreParts,
     ScoringSnapshot,
+    UnmappedItem,
 )
 from ..contracts.job_config import JobConfig
 from ..contracts.llm_outputs import (
@@ -192,11 +193,12 @@ def _merge_compare_runs(runs: list) -> object:
         return next(r for r in runs if r.obj is None)
     counts = Counter(r.obj.verdict for r in valid)
     top = counts.most_common()
-    winner = sorted(v for v, c in top if c == top[0][1])[0]
+    order = {"不达标": 0, "边缘": 1, "达标": 2}
+    winner = max((v for v, c in top if c == top[0][1]), key=lambda v: order.get(v, 1))
     same = [r for r in valid if r.obj.verdict == winner]
-    confs = sorted(r.obj.confidence for r in same)
-    median = confs[len(confs) // 2]
-    return min(same, key=lambda r: (abs(r.obj.confidence - median), (r.meta.trace_ids or [""])[-1]))
+    # 并列的候选轮里取**置信度更低**的那一轮（= 更保守的一份判断与理由）：
+    # 用户口径"3 次里 2 次达标就取那 2 次里较低的值"；置信度并列再用 trace_id 兜底保证确定性。
+    return min(same, key=lambda r: (r.obj.confidence, (r.meta.trace_ids or [""])[-1]))
 
 
 def questions_skip_reason(hard: list[HardFilterResult], compare_data: dict | None) -> tuple[str, list[str]]:
@@ -243,6 +245,16 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                                    extra_items=cover.items if cover.ok else None,
                                                    span_map=span_map)
     label_res_status = label_meta.validation.status
+
+    # 锚定兜底（实测教训：一刀切转人工会把 77 分的人刷掉）
+    # 锚定失败的条目**剔出计分**：它自己那部分分数不算，其余证据照常算——比"整份强制转人工"平滑得多。
+    # 剔除后不再有"未锚定的最强证据"，契约的安全约束自然满足；被剔的条目记进 unmapped_items 留痕。
+    kept, dropped = [], []
+    for it in labeled:
+        (kept if (it.get("span_id") or "") else dropped).append(it)
+    if dropped:
+        notes.append(f"有 {len(dropped)} 条证据锚定失败 → 已剔出计分（只扣这些条目，其余证据照常算）")
+    labeled = kept
 
     # ---------------------------------------------------------- ③ 整体判定（可重复 + 多数票）
     # 为什么重复：实测分数已经锁死（同一份简历三次极差 0.0），但「整体判定」仍在达标/边缘之间跳；
@@ -336,7 +348,8 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
                                            [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     # 稳定性闸门：没测过/不达标时不许自动淘汰（分数会漂，拿它刷人等于随机刷人）
     outcome = apply_gate(outcome, stability_latest(job.job_id, job.config_version),
-                         job_id=job.job_id, config_version=job.config_version)
+                         job_id=job.job_id, config_version=job.config_version,
+                         allow_auto_reject=bool(getattr(job.scoring, "auto_reject_enabled", False)))
 
     sc = job.scoring
     reasons = []
@@ -360,7 +373,11 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
         score_parts=ScoreParts(**parts),
         bonus_hits=bonus, bonus_points=round(sum(b.points for b in bonus), 1),
         total_with_bonus=round(rules.base_total + sum(b.points for b in bonus), 1),
-        unmapped_items=rules.unmapped,
+        unmapped_items=[*rules.unmapped] + [
+            UnmappedItem(item_id=it.get("item_id") or "", capability=it.get("capability") or "",
+                         relevance=it.get("relevance") or "无关", difficulty=it.get("difficulty") or "低",
+                         span_id=None, reason="锚定失败 → 未参与计分（只扣该条，不阻断其余证据）")
+            for it in dropped],
         coverage=cover.coverage,
         fit=fit_obj,
         cited_evidence=cited,

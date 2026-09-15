@@ -333,6 +333,19 @@
           "title": "Compare Repeats",
           "type": "integer"
         },
+        "auto_reject_enabled": {
+          "default": false,
+          "description": "是否允许自动淘汰。**冷启动默认关闭**：没有真实人工复核反馈之前，'转人工'就是最好的'淘汰'——一票刷掉且无人复核是不可逆的。开启前先确认稳定性记录的危险侧翻转率为 0",
+          "title": "Auto Reject Enabled",
+          "type": "boolean"
+        },
+        "auto_pass_margin": {
+          "default": 5.0,
+          "description": "自动达标要多出的分数余量：要求 分数 ≥ 线+band+余量。把'最确定的那批'与线附近的人分开，边界上的抖动交给人（0 = 关闭该余量）",
+          "minimum": 0,
+          "title": "Auto Pass Margin",
+          "type": "number"
+        },
         "fallback_keyword_mapping": {
           "default": true,
           "description": "模型没给维度时是否用维度 keywords 兜底归类",

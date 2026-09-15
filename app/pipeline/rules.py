@@ -248,10 +248,24 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
                                reason=f"方向不符（技能画像与岗位无交集，匹配率 {fit.fit_ratio}）且规则分 {base_total} < {rej_thr} → 自动淘汰，可申诉",
                                conflicts=conflicts, hard_filters=hard)
 
-    # 3) 双通道（整体判定 × 规则分 + 三段带）
-    if llm_pass and base_total >= pass_thr:
+    # 3) 双通道（整体判定 × 规则分 + 三段带 + **自动达标余量**）
+    #    余量（scoring.auto_pass_margin）的意思：只把"明显高出一截"的人自动放过去，
+    #    刚过线的那一批（判定达标但分数余量不足）交给 HR。实测：分数在 65~70 这一段的人
+    #    模型整体判定会在达标/边缘之间跳，自动放行等于把边界抖动直接变成处置抖动。
+    margin = float(getattr(sc, "auto_pass_margin", 0.0) or 0.0)
+    if llm_pass and base_total >= pass_thr + margin:
         return DecisionOutcome(verdict="达标", decision="auto_pass",
-                               reason=f"整体判定达标且规则分 {base_total} ≥ {pass_thr}（达标线 {sc.pass_line} + {sc.band_width}）",
+                               reason=f"整体判定达标且规则分 {base_total} ≥ {pass_thr + margin:g}"
+                                      f"（达标线 {sc.pass_line} + {sc.band_width} + 余量 {margin:g}）",
+                               conflicts=conflicts, hard_filters=hard)
+
+    if llm_pass and base_total >= pass_thr:
+        conflicts.append(Conflict(type="edge_band",
+                                  detail=f"整体达标但规则分 {base_total} 未达 {pass_thr + margin:g}"
+                                         f"（线 {sc.pass_line} + band {sc.band_width} + 余量 {margin:g}）"))
+        return DecisionOutcome(verdict="边缘", decision="manual_review",
+                               reason=f"整体判定达标但分数余量不足（{base_total} < {pass_thr + margin:g}）"
+                                      f"→ 转人工确认（边界不做自动处置）",
                                conflicts=conflicts, hard_filters=hard)
 
     if llm_pass and base_total < pass_thr:

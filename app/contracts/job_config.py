@@ -135,6 +135,14 @@ class Scoring(Strict):
         description="整体判定阶段的重复次数：>1 时对「达标/边缘/不达标」取多数票。"
                     "实测：分数锁定后（极差 0.0），整体判定仍在达标/边缘之间跳 → 3 次里翻 1 次就把"
                     "自动处置翻成转人工，稳定性一致率卡在 0.67。成本是整体判定多调 2 次")
+    auto_reject_enabled: bool = Field(
+        default=False,
+        description="是否允许自动淘汰。**冷启动默认关闭**：没有真实人工复核反馈之前，'转人工'就是最好的"
+                    "'淘汰'——一票刷掉且无人复核是不可逆的。开启前先确认稳定性记录的危险侧翻转率为 0")
+    auto_pass_margin: float = Field(
+        default=5.0, ge=0,
+        description="自动达标要多出的分数余量：要求 分数 ≥ 线+band+余量。把'最确定的那批'与线附近的人"
+                    "分开，边界上的抖动交给人（0 = 关闭该余量）")
     fallback_keyword_mapping: bool = Field(default=True, description="模型没给维度时是否用维度 keywords 兜底归类")
     confidence_floor: float = Field(default=0.6, ge=0, le=1, description="低于此置信度不自动淘汰")
     reject_border_when_low: bool = Field(

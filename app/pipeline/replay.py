@@ -57,7 +57,8 @@ def _finish(cfg: JobConfig, outcome, *, gate: bool):
     if not gate:
         return outcome
     return apply_gate(outcome, stability_latest(cfg.job_id, cfg.config_version),
-                      job_id=cfg.job_id, config_version=cfg.config_version)
+                      job_id=cfg.job_id, config_version=cfg.config_version,
+                      allow_auto_reject=bool(getattr(cfg.scoring, "auto_reject_enabled", False)))
 
 
 def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,

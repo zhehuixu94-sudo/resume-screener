@@ -23,6 +23,35 @@ SEP_CHARS = "|｜/／·、,，;；"
 SEPARATOR = rf"\s*(?:[{SEP_CHARS}]\s*)?"
 SPLIT = rf"[\s{SEP_CHARS}]+"
 
+# 去噪后可包含匹配：空白 + 中英标点 + 全角符号。模型改写标点/加空格/换全角时，
+# "逐字相同"会失败，但去掉这些噪声后就是原文的连续切片——实测这一类是锚定失败的主体。
+NOISE = re.compile(r"[\s\u3000\u200b-\u200f!-/:-@\[-`{-~，。、；：？！\u201c\u201d\u2018\u2019（）"
+                   r"《》〈〉【】〔〕…—－·～￥$%‰°™®©]+")
+
+
+def _denoise(text: str) -> tuple[str, list[int]]:
+    """去掉空白/标点并小写化，同时保留"净化后第 i 个字符 → 原文下标"的映射。"""
+    keep, idx = [], []
+    for i, ch in enumerate(text):
+        if NOISE.match(ch):
+            continue
+        keep.append(ch.lower())
+        idx.append(i)
+    return "".join(keep), idx
+
+
+def _denoised_containment(ev: str, text: str) -> tuple[int, int, float] | None:
+    """净化后包含匹配：模型改写标点/大小写/空格，但内容仍是原文连续切片时命中。"""
+    tn, tmap = _denoise(text)
+    en, _ = _denoise(ev)
+    if len(en) < MIN_LEN or not tn:
+        return None
+    i = tn.find(en)
+    if i < 0:
+        return None
+    sim = round(len(en) / max(1, len(ev)), 3)      # 净化丢掉的字符比例反映"改写程度"
+    return (tmap[i], tmap[i + len(en) - 1] + 1, max(0.9, sim))
+
 
 @dataclass
 class AnchorResult:
@@ -103,7 +132,18 @@ def anchor(evidence: str, norm: Normalized, *, min_len: int = MIN_LEN,
                                       note="空白或分隔符与原文不一致"),
                             CharRange(start=m.start(), end=m.end()))
 
-    # 3) 模糊
+    # 3) 去噪包含匹配（空白/标点/大小写差异 + 分隔符拼接）
+    #    实测教训：模型给的片段经常只是"改写了标点或加了空格"，严格逐字匹配却判为失败 →
+    #    该条证据当上"维度最强证据"后触发 unanchored_evidence → 77 分的人被强制转人工。
+    dc = _denoised_containment(ev, text)
+    if dc:
+        s, e, sim = dc
+        return AnchorResult(Anchoring(method="ws_insensitive", similarity=round(sim, 3),
+                                      matched_text=text[s:e],
+                                      note="去空白/标点/大小写后与原文一致（模型改写了标点或空格）"),
+                            CharRange(start=s, end=e))
+
+    # 4) 模糊
     fz = _fuzzy_search(ev, text, fuzzy_threshold)
     if fz:
         s, e, ratio = fz

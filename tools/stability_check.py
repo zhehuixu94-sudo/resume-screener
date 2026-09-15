@@ -27,6 +27,8 @@ from app.pipeline.evaluate import evaluate  # noqa: E402
 from app.pipeline.parse import parse_resume  # noqa: E402
 from app.pipeline.rules import decide, rule_layer, sync_decisions_with_evidence  # noqa: E402
 from app.pipeline.score import gate_score                                            # noqa: E402
+from app.pipeline.stability import MAX_DANGER_FLIP, MAX_SAFE_FLIP, MAX_SCORE_GAP   # noqa: E402
+from app.pipeline.stability import flip_metrics                                    # noqa: E402
 from app.pipeline.stability import record as stability_record                      # noqa: E402
 from app.pipeline.stability import status_text as stability_status_text            # noqa: E402
 from app.pipeline.hard_filters import check_hard_filters  # noqa: E402
@@ -159,18 +161,38 @@ def main() -> int:
         print(f"  {e['resume']}：best 极差 {e['gap_best']:.1f} → top2_mean 极差 {e['gap_top2']:.1f}（{better} 更稳）")
 
     if a.record and results:
-        # 闸门看的是「判定一致率」与样本数：这里按所有样本里最差的那份来记（保守）
+        # 闸门判据已改成**非对称两侧翻转率**（见 app/pipeline/stability.py）：
+        #   危险侧（从严翻到淘汰/不达标）必须为 0；安全侧（多让人看一眼）宽容到 30%。
+        # 旧口径"判定一致率"只作参考一并落库，不再是判据。
         agreement = min(e["verdict_consistency"] for e in results)
         gap = max(e["gap_best"] for e in results)
+        samples = [{"resume": e["resume"],
+                    "decisions": e["modes"]["best"]["decisions"],
+                    "verdicts": e["modes"]["best"]["verdicts"]} for e in results]
+        metrics = flip_metrics(samples)
+        print("\n三口径指标（报告的统计口径就以这三条为准）：")
+        print(f"  分数极差         {gap:>6.1f}   {'✅ 通过' if gap <= MAX_SCORE_GAP else '❌ 超限'}（上限 {MAX_SCORE_GAP}）")
+        print(f"  危险侧翻转率     {metrics['danger_flip_rate']:>6.0%}   "
+              f"{'✅ 通过' if metrics['danger_flip_rate'] <= MAX_DANGER_FLIP else '❌ 危险'}"
+              f"（必须 0：重复跑时从严翻到淘汰/不达标）")
+        print(f"  安全侧翻转率     {metrics['safe_flip_rate']:>6.0%}   "
+              f"{'✅ 通过' if metrics['safe_flip_rate'] < MAX_SAFE_FLIP else '⚠️ 偏高'}"
+              f"（宽容 <{MAX_SAFE_FLIP:.0%}：多数票自动达标、个别次转人工）")
+        print(f"  〔参考〕判定一致率 {agreement:.0%}（旧口径，只作对照，不代表危险程度）")
+        for d in metrics["per_resume"]:
+            print(f"    {d['resume']:<24} 多数票 {d['majority']:<14} 各次 {d['decisions']}"
+                  f"{'  ⚠️危险侧' if d['danger'] else ''}{'  ⚠️安全侧' if d['safe'] else ''}")
         check_id = stability_record(cfg.job_id, cfg.config_version, n_samples=len(results),
                                    agreement=agreement, score_range=gap,
+                                   danger_flip_rate=metrics["danger_flip_rate"],
+                                   safe_flip_rate=metrics["safe_flip_rate"],
                                    detail={"accept_gap": ACCEPT_GAP, "repeat": a.repeat,
-                                           "model": a.model,
+                                           "model": a.model, "metrics": metrics,
                                            "per_resume": {e["resume"]: {"consistency": e["verdict_consistency"],
                                                                         "gap": e["gap_best"]}
                                                           for e in results}})
-        print(f"\n已记录稳定性：check_id={check_id} · 判定一致率 {agreement:.0%}（取最差样本）· "
-              f"样本 {len(results)} 份 · 极差 {gap:.1f}")
+        print(f"\n已记录稳定性：check_id={check_id} · 样本 {len(results)} 份 · "
+              f"极差 {gap:.1f} · 危险侧 {metrics['danger_flip_rate']:.0%} · 安全侧 {metrics['safe_flip_rate']:.0%}")
         print(f"闸门状态：{stability_status_text(cfg.job_id, cfg.config_version)}")
 
     os.makedirs(os.path.join(ROOT, a.out), exist_ok=True)

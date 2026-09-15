@@ -86,7 +86,8 @@ def env():
 
     from app.pipeline import stability                  # 校准生效的前提：稳定性已达标
     db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
-    stability.record(JOB_ID, "1", n_samples=4, agreement=0.9, score_range=2.0)
+    stability.record(JOB_ID, "1", n_samples=4, agreement=0.9, score_range=2.0,
+                     danger_flip_rate=0.0, safe_flip_rate=0.0)
 
     for a in apps:                                     # 合成标注：高分该留 / 低分该淘汰
         db.execute(

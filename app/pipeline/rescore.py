@@ -66,7 +66,8 @@ def rescore_batch(job: JobConfig, *, apply: bool = True, verbose: bool = True) -
         outcome = sync_decisions_with_evidence(outcome, anchored,
                                                [d.best_span_id or "" for d in ev.dimensions if d.points > 0])
         outcome = apply_gate(outcome, stability_latest(job.job_id, job.config_version),
-                             job_id=job.job_id, config_version=job.config_version)
+                             job_id=job.job_id, config_version=job.config_version,
+                             allow_auto_reject=bool(getattr(job.scoring, "auto_reject_enabled", False)))
         ev2 = ev.model_copy(update={
             "gate_score": total,
             "score_parts": ev.score_parts.model_copy(update=parts) if ev.score_parts else None,

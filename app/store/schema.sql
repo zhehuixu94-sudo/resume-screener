@@ -145,6 +145,9 @@ CREATE INDEX IF NOT EXISTS idx_chunk_resume ON resume_chunk (resume_id);
 ALTER TABLE resume ADD COLUMN IF NOT EXISTS file_path TEXT;
 -- 判定分独立成列：base_total 变成"维度分合计（报告用）"，判定与达标线比较的是 gate_score
 ALTER TABLE evaluation ADD COLUMN IF NOT EXISTS gate_score REAL NOT NULL DEFAULT 0;
+-- 稳定性闸门判据改成非对称两侧翻转率（见 app/pipeline/stability.py）
+ALTER TABLE stability_check ADD COLUMN IF NOT EXISTS danger_flip_rate REAL;
+ALTER TABLE stability_check ADD COLUMN IF NOT EXISTS safe_flip_rate REAL;
 UPDATE evaluation SET gate_score = base_total WHERE gate_score = 0 AND base_total > 0;
 -- 老行的 payload 里没有 gate_score 字段（那是新公式写入的），契约会把它当 0 读——必须回填，
 -- 并诚实标注这些行"判定时用的是 base_total"（gate_score_field 是复现历史分数的关键参数）。
