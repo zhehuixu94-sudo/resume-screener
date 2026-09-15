@@ -114,6 +114,7 @@
   ],
   "scoring": {
     "pass_line": 60,
+    "auto_pass_line": 70,
     "pass_line_source": "manual_default",
     "band_width": 5,
     "dimension_aggregation": "best",

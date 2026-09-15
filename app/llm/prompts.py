@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 
-PROMPT_VERSION = "p1.2"
+PROMPT_VERSION = "p1.3"
 
 SYS_PARSE = "你是简历结构化解析器。只输出 JSON，不要任何解释文字。"
 SYS_LABEL = "你是招聘评估助手。只输出 JSON，不要任何解释文字。"

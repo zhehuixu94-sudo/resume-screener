@@ -395,8 +395,8 @@ def evaluate(parse: ResumeParse, job: JobConfig, client: SiliconFlowClient, *, m
             per_item_agreement_min=label_stats["per_item_agreement_min"]),
         scoring_snapshot=ScoringSnapshot(
             aggregation=sc.dimension_aggregation, pass_line=sc.pass_line, pass_line_source=sc.pass_line_source,
-            band_width=sc.band_width, pass_threshold=sc.pass_line + sc.band_width,
-            reject_threshold=sc.pass_line - sc.band_width, confidence_floor=sc.confidence_floor,
+            band_width=sc.band_width, pass_threshold=sc.pass_threshold(),
+            reject_threshold=sc.reject_threshold(), confidence_floor=sc.confidence_floor,
             compare_repeats=n_compare,
             config_version=job.config_version),
         quality=EvalQuality(gate_passed=parse.quality.gate_passed, issues=parse.quality.issues,

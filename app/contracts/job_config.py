@@ -139,10 +139,26 @@ class Scoring(Strict):
         default=False,
         description="是否允许自动淘汰。**冷启动默认关闭**：没有真实人工复核反馈之前，'转人工'就是最好的"
                     "'淘汰'——一票刷掉且无人复核是不可逆的。开启前先确认稳定性记录的危险侧翻转率为 0")
+    auto_pass_line: float | None = Field(
+        default=None, ge=0,
+        description="**自动达标线（设定值即生效值）**：分数 ≥ 它且整体判定达标 → 自动达标。\n"
+                    "None = 取 pass_line + band_width（沿用三段带默认）。\n"
+                    "⚠️ 曾经的 auto_pass_margin 是隐性叠加：用户设 60 却要 70 才自动过，UI 上怎么调都对不上。"
+                    "现在只有这一个可见参数，写多少就是多少。")
+    # 该字段只用于"内部余量"的历史兼容：新配置不要再设
     auto_pass_margin: float = Field(
-        default=5.0, ge=0,
-        description="自动达标要多出的分数余量：要求 分数 ≥ 线+band+余量。把'最确定的那批'与线附近的人"
-                    "分开，边界上的抖动交给人（0 = 关闭该余量）")
+        default=0.0, ge=0,
+        description="[已废弃] 旧的隐性余量，保留仅为兼容老配置文件；请改用 auto_pass_line。"
+                    "两者同时设置时以 auto_pass_line 为准（且不再叠加余量）")
+
+    def pass_threshold(self) -> float:
+        """**生效的**自动达标线：设定值优先，未设时回退 pass_line + band_width。"""
+        return float(self.auto_pass_line) if self.auto_pass_line is not None \
+            else float(self.pass_line) + float(self.band_width)
+
+    def reject_threshold(self) -> float:
+        """生效的自动淘汰线（冷启动下不启用，但判据要能显示出来）。"""
+        return float(self.pass_line) - float(self.band_width)
     fallback_keyword_mapping: bool = Field(default=True, description="模型没给维度时是否用维度 keywords 兜底归类")
     confidence_floor: float = Field(default=0.6, ge=0, le=1, description="低于此置信度不自动淘汰")
     reject_border_when_low: bool = Field(
