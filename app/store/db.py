@@ -12,15 +12,21 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
 
 SCHEMA_SQL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
-KEY_FILE = os.environ.get("SILICONFLOW_ENV_FILE", r"D:\Hermes\secrets\openclaw.env")
+KEY_FILE = os.environ.get("SILICONFLOW_ENV_FILE") or None   # 不写死本机路径，见 _from_key_file
 
 DEFAULTS = {"host": "127.0.0.1", "port": "5432", "user": "resume_app", "dbname": "resume_screener"}
 
 
 def _from_key_file(name: str) -> str | None:
-    if not os.path.exists(KEY_FILE):
+    """从本机密钥文件取值；没配 `SILICONFLOW_ENV_FILE` 或文件不存在 → None（上层会走默认值）。
+
+    ⚠️ 这里曾把开发机的绝对路径当默认值：既公开了本机目录结构，又会让别人 clone 后
+    静默读到不属于他的文件。密钥一律走环境变量或显式配置。
+    """
+    path = KEY_FILE or os.environ.get("SILICONFLOW_ENV_FILE")
+    if not path or not os.path.exists(path):
         return None
-    m = re.search(rf"^{name}\s*=\s*([^\s#]+)", open(KEY_FILE, encoding="utf-8", errors="replace").read(), re.M)
+    m = re.search(rf"^{name}\s*=\s*([^\s#]+)", open(path, encoding="utf-8", errors="replace").read(), re.M)
     return m.group(1).strip().strip('"') if m else None
 
 

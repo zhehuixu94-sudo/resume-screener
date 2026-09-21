@@ -12,8 +12,9 @@ from __future__ import annotations
 from app.pipeline.honesty import (batch_percentiles, honesty_penalty, is_fluff,
                                   is_high_confidence_fluff, quantile_flags, quantile_penalty,
                                   resume_signals, span_concreteness)
-from app.pipeline.weighted_total import (base_points, bonus_raw, percentile_rank, score_batch,
-                                         total_score)
+from app.pipeline.weighted_total import (BONUS_BUDGET, base_points, bonus_raw, bonus_raw_v2,
+                                         percentile_rank, score_batch, skill_words,
+                                         span_quality, total_score)
 
 GOOD = "考勤统计与社保公积金资料整理（每月 200 余人次，零差错）"
 FLUFF = "沟通协调能力强，做事细致有耐心"
@@ -71,9 +72,9 @@ def test_base_points_uses_strongest_item_per_dimension() -> None:
 
 def test_additive_not_multiplicative() -> None:
     """基础项为 0 时，加分项仍然全额给——这是和旧乘法口径最关键的区别。"""
-    assert total_score(0.0, 1.0, 0.0) == 40.0
-    assert total_score(60.0, 1.0, 0.0) == 100.0
-    assert total_score(60.0, 1.0, 30.0) == 70.0
+    assert total_score(0.0, 1.0, 0.0) == BONUS_BUDGET          # 定稿 scale=25（原 40）
+    assert total_score(60.0, 1.0, 0.0) == 60.0 + BONUS_BUDGET
+    assert total_score(60.0, 1.0, 30.0) == 60.0 + BONUS_BUDGET - 30.0
     assert total_score(0.0, 0.0, 50.0) == 0.0               # 下界 0，不出现负分
 
 
@@ -162,3 +163,22 @@ def test_quantile_is_scale_invariant() -> None:
     wet = {"a": {"fluff_rate": 0.50}, "b": {"fluff_rate": 0.52}, "c": {"fluff_rate": 0.90}}
     assert [quantile_penalty(batch_percentiles(d)[k]) > 0 for d in (dry, wet) for k in ("a", "b", "c")] == \
         [False, False, True] * 2
+
+def test_bonus_not_constant_when_difficulty_missing() -> None:
+    """加分项 = Σ 相关度 × 难度：只给 relevance_score 会让它恒为 0（整批并列 → 加分项变常数）。
+
+    实测事故：整批 310 份的加分项都算成 20.0 分（分位 0.50），占 40 分的一项完全不区分人。
+    """
+    from app.pipeline.score import dimensions_from_labeled
+    from app.contracts import JobConfig
+    import json as _json
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    cfg = JobConfig.model_validate(
+        _json.load(open(_os.path.join(root, "config", "job_game_dev.json"), encoding="utf-8")))
+    dim = cfg.dimensions[0].id
+    labeled = [{"dimension": dim, "relevance_score": 1.0, "difficulty_score": 1.4},
+               {"dimension": dim, "relevance_score": 0.6, "difficulty_score": 0.5}]
+    dims = dimensions_from_labeled(cfg, labeled)
+    assert bonus_raw(dims) > 0, "difficulty_score 丢了 → 加分项恒为 0"
+    assert abs(bonus_raw(dims) - (1.0 * 1.4 + 0.6 * 0.5)) < 1e-6

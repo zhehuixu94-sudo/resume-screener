@@ -11,6 +11,7 @@ __pycache__/
 out/
 local/*
 !local/resumes.json.example
+!local/*.example
 *.log
 
 # ---- 密钥与本地配置 ----
@@ -33,3 +34,5 @@ dist/
 
 # ---- 校准时的配置版本备份（内容已存 calibration 表，避免仓库噪音）----
 config/history/
+config/*.bak-*
+config/*.bak

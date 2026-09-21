@@ -12,7 +12,7 @@
 
 分数构成（0~100）：
     基础项 = Σ_维度 [60 × (维度权重/权重和) × 该维度最强证据的相关度]     ← 每份简历自洽、可复现
-    加分项 = 40 × 本批分位(Σ 相关度×难度)                                  ← 相对量，需整批上下文
+    加分项 = 25 × 本批分位(Σq/√n)                                          ← 相对量，需整批上下文
     扣分   = 30 × 空话率^1.5                                              ← 非线性，见 honesty.fluff_penalty
 单份评估拿不到"本批"时，加分项用中性位次 0.5；整批跑完后由 `app/pipeline/rescore.py` 回填真实分位。
 """
@@ -21,7 +21,7 @@ from __future__ import annotations
 from ..contracts import JobConfig
 from .honesty import resume_signals
 from .weighted_total import (BASE_BUDGET, BONUS_BUDGET, NEUTRAL_RANK, PENALTY_CAP, PENALTY_EXPONENT,
-                             base_points, bonus_raw, penalty_points, total_score)
+                             base_points, bonus_raw_v2, penalty_points, skill_words, total_score)
 
 
 def dimensions_from_labeled(cfg: JobConfig, labeled: list[dict]) -> list[dict]:
@@ -35,8 +35,10 @@ def dimensions_from_labeled(cfg: JobConfig, labeled: list[dict]) -> list[dict]:
         dim = it.get("dimension") if isinstance(it, dict) else None
         if not dim:
             continue
-        by_dim.setdefault(dim, []).append({"relevance_score": (it.get("relevance_score")
-                                                               if isinstance(it, dict) else None)})
+        by_dim.setdefault(dim, []).append({
+            "relevance_score": (it.get("relevance_score") if isinstance(it, dict) else None),
+            # 加分项 = Σ 相关度 × 难度：漏掉 difficulty_score 会让加分项恒为常数（别再踩）
+            "difficulty_score": (it.get("difficulty_score") if isinstance(it, dict) else None)})
     order = [d.id for d in cfg.dimensions]
     return [{"id": dim, "items": by_dim[dim]} for dim in order if dim in by_dim]
 
@@ -59,7 +61,8 @@ def gate_score(cfg: JobConfig, dimensions: list[dict], evidence_texts: list[str]
     total = total_score(base, rank01, pen, bonus_budget=BONUS_BUDGET)
     parts = {
         "base": base,
-        "bonus_raw": round(bonus_raw(dimensions), 3),
+        # 加分项原始量（定稿口径 G2 = Σq/√n）：分位就是拿它在**本批**里排名得到的
+        "bonus_raw": round(bonus_raw_v2(evidence_texts or [], skill_words(cfg)), 4),
         "rank01": round(rank01, 4),
         "bonus": round(BONUS_BUDGET * rank01, 2),
         "penalty": pen,

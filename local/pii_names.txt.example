@@ -1,0 +1,5 @@
+# 复制为 local/pii_names.txt 后填真实名单（该文件已被 .gitignore 覆盖，不会入库）
+# 格式：每行「原名<TAB>替换名」，# 开头为注释
+#
+# 示例：
+# 张三	zhangsan-id

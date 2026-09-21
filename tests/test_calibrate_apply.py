@@ -36,9 +36,12 @@ SRC_JOB = "game_dev"
 
 
 @pytest.fixture()
-def env():
+def env(monkeypatch):
     """用真实评估结果的 payload 造 6 行：3 行高分（标为该留）+ 3 行低分（标为该淘汰）。"""
     tmp = tempfile.mkdtemp(prefix="calib-apply-")
+    # 快照目录指到临时目录：仍走**真实命名规则**，但不往仓库的 config/snapshots 里丢测试文件
+    import tools.freeze_config_snapshot as _fz
+    monkeypatch.setattr(_fz, "SNAPSHOT_DIR", os.path.join(tmp, "snapshots"))
     src = db.fetch_all(
         """SELECT e.payload, e.base_total FROM evaluation e JOIN application a USING(application_id)
             WHERE a.job_id = %s AND a.config_version = '3' ORDER BY e.base_total DESC""", (SRC_JOB,))
@@ -54,11 +57,13 @@ def env():
     cfg_path = os.path.join(tmp, "job_test.json")
     raw = {**json.load(open("config/job_game_dev.json", encoding="utf-8")),
            "job_id": JOB_ID, "config_version": "1"}
+    raw["scoring"] = {**raw["scoring"], "calibration_version": 0}
     json.dump(raw, open(cfg_path, "w", encoding="utf-8"), ensure_ascii=False)
     cfg = JobConfig.model_validate(raw)
 
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
     db.execute("DELETE FROM calibration WHERE job_id = %s", (JOB_ID,))
+    db.execute("DELETE FROM job_config WHERE job_id = %s", (JOB_ID,))   # 清掉上一轮遗留的世代行（含旧代码留下的 v2）
     apps = []
     for i, r in enumerate(highs + lows):
         payload, score = r["payload"], r["base_total"]
@@ -89,17 +94,31 @@ def env():
     stability.record(JOB_ID, "1", n_samples=4, agreement=0.9, score_range=2.0,
                      danger_flip_rate=0.0, safe_flip_rate=0.0)
 
+    # 合成标注（新版入口：只认 spot_check_item 的标记位 + 复核结论）
+    #   低分 3 条 → auto_reject + reject + calibration_eligible=true  → 负样本
+    #   高分 3 条 → auto_reject + keep（确认漏放）                    → 正样本
+    db.execute("DELETE FROM spot_check_batch WHERE job_id = %s", (JOB_ID,))
+    batch = db.execute(
+        """INSERT INTO spot_check_batch (company_id, job_id, config_version, check_date, drawn, want, pool_size, note)
+           VALUES ('local', %s, '1', '2026-09-15', %s, %s, %s, '测试批次') RETURNING batch_id""",
+        (JOB_ID, len(apps), len(apps), len(apps)), returning=True)
     for a in apps:                                     # 合成标注：高分该留 / 低分该淘汰
+        keep = a["label"] == "pass"
         db.execute(
-            """INSERT INTO review_decision (company_id, application_id, resume_id, job_id, config_version,
-                                            action, source, note)
-               VALUES ('local', %s, %s, %s, '1', %s, 'manual', '测试标注')""",
-            (a["application_id"], a["resume_id"], JOB_ID, a["label"]))
+            """INSERT INTO spot_check_item (batch_id, application_id, resume_id, job_id, config_version,
+                                            check_date, score, state, source, priority_class,
+                                            calibration_eligible, review_verdict, reviewer, review_ts)
+               VALUES (%s, %s, %s, %s, '1', '2026-09-15', %s, %s, 'auto_reject', 'descending', %s, %s, 'hr-test',
+                       '2026-09-15T10:00:00')""",
+            (int(batch["batch_id"]), a["application_id"], a["resume_id"], JOB_ID, 0.0,
+             "passed" if keep else "rejected", (not keep), "keep" if keep else "reject"))
 
     yield cfg, apps, cfg_path, tmp
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
     db.execute("DELETE FROM calibration WHERE job_id = %s", (JOB_ID,))
     db.execute("DELETE FROM stability_check WHERE job_id = %s", (JOB_ID,))
+    db.execute("DELETE FROM spot_check_batch WHERE job_id = %s", (JOB_ID,))
+    db.execute("DELETE FROM job_config WHERE job_id = %s", (JOB_ID,))
     for a in apps:
         db.execute("DELETE FROM resume WHERE resume_id = %s", (a["resume_id"],))
     shutil.rmtree(tmp, ignore_errors=True)
@@ -114,16 +133,18 @@ def test_apply_then_rollback(env) -> None:
     assert res["samples"]["separated"] is True
 
     after = json.load(open(cfg_path, encoding="utf-8"))
-    assert after["config_version"] == "2", "生效要 bump 版本（历史结果仍可复现）"
+    assert after["config_version"] == "1", "配置世代不许被校准动（动它会让整批结果从操作视图消失）"
+    assert after["scoring"]["calibration_version"] == 1, "动线只动 calibration_version"
     assert after["scoring"]["pass_line"] == res["after_line"]
     assert os.path.exists(res["backup"]), "旧配置要备份"
     row = db.fetch_one("SELECT status, reverted_at FROM calibration WHERE job_id = %s", (JOB_ID,))
     assert row["status"] == "applied" and row["reverted_at"] is None
 
     rb = calibrate.rollback(cfg_path)
-    assert rb["status"] == "reverted" and rb["back_to"] == "1"
+    assert rb["status"] == "reverted" and rb["back_to_cv"] == "0" and rb["undone_cv"] == "1"
     back = json.load(open(cfg_path, encoding="utf-8"))
     assert back["config_version"] == "1" and back["scoring"]["pass_line"] == 60
+    assert back["scoring"].get("calibration_version", 0) == 0, "回滚要连线版本一起退回去"
     row = db.fetch_one("SELECT reverted_at FROM calibration WHERE job_id = %s", (JOB_ID,))
     assert row["reverted_at"] is not None, "回滚要留痕"
     assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback", "不能重复回滚同一次校准"
@@ -131,11 +152,86 @@ def test_apply_then_rollback(env) -> None:
 
 def test_insufficient_samples_never_moves_the_line(env) -> None:
     cfg, apps, cfg_path, tmp = env
-    db.execute("DELETE FROM review_decision WHERE job_id = %s", (JOB_ID,))     # 把标注清空
+    db.execute("DELETE FROM spot_check_item WHERE job_id = %s", (JOB_ID,))     # 把复核结论清空
     res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
-    assert res["status"] == "skipped" and "样本不足" in res["reason"]
+    # 口径（选项 A）：先查正样本，不足就**显式**说"校准未启用"，不许静默报"样本不足"
+    assert res["status"] == "skipped" and "校准未启用" in res["reason"], res
+    assert res["calibration_enabled"] is False
     assert json.load(open(cfg_path, encoding="utf-8"))["scoring"]["pass_line"] == 60, "样本不足不许动线"
     assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback"
+
+
+def test_apply_freezes_snapshot_in_same_transaction(env) -> None:
+    """动线必留快照：apply 成功 → 新快照存在、版本与配置逐字对得上、路径来自命名规则。"""
+    cfg, apps, cfg_path, tmp = env
+    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
+    assert res["status"] == "applied", res
+    snap_path = res["snapshot_path"]
+    assert os.path.exists(snap_path), "apply 必须同批次冻结快照"
+    sem = cfg.scoring.scoring_semantics or "UNSET"          # 没写公式标记 → 文件名里就是 UNSET（不静默）
+    assert os.path.normpath(snap_path) == os.path.normpath(
+        os.path.join(tmp, "snapshots", f"{JOB_ID}_v{res['config_version']}-cv{res['calibration_version']}-{sem}.json")),         "快照名必须带 cv 段（配置世代不变）"
+    import json as _j
+    snap = _j.load(open(snap_path, encoding="utf-8"))
+    assert snap["config_version"] == res["config_version"], "快照的配置世代必须与 apply 后一致"
+    assert snap["config"]["scoring"]["calibration_version"] == res["calibration_version"], "快照内 cv 要对得上"
+    assert snap["config"] == _j.load(open(cfg_path, encoding="utf-8")), "快照内嵌配置要逐字等于落盘配置"
+    assert snap["config"]["scoring"]["pass_line"] == res["after_line"], "pass_line 变更可追溯"
+    assert snap["batch_fingerprint"] == res["batch_fingerprint"]
+    # 配置世代不变 → 快照绑定**本世代已有的 6 行**；但它们的判定线是 60、当前线是 52，
+    # 所以必须在 note 里说明"指标来自旧线"（n=0 的"尚无入库结果"分支由 test_final_package 那条覆盖）
+    assert snap["metrics"]["n"] == 6
+    assert snap["metrics"]["result_pass_lines"] == [60.0]
+    assert "旧线" in snap["note"] and "rescore" in snap["note"], snap["note"]
+    row = db.fetch_one("""SELECT changed FROM calibration
+                           WHERE job_id = %s AND status = 'applied' ORDER BY created_at DESC LIMIT 1""", (JOB_ID,))
+    assert row["changed"]["snapshot"] == snap_path, "calibration.changed 里要留下快照路径"
+    assert row["changed"]["pass_line"] == {"before": 60, "after": res["after_line"]}
+    assert row["changed"]["config_version"] == "1", "线动了，配置世代记在 changed 里备查"
+    assert row["changed"]["calibration_version"] == {"before": 0, "after": 1}
+
+
+def test_freeze_failure_rolls_back_whole_apply(env, monkeypatch) -> None:
+    """注入冻结失败 → 线不动、版本不动、无半写状态（配置/库/快照/calibration 行全还原）。"""
+    cfg, apps, cfg_path, tmp = env
+    before_text = open(cfg_path, encoding="utf-8").read()
+
+    def boom(*a, **kw):
+        raise RuntimeError("磁盘炸了（注入）")
+    monkeypatch.setattr(calibrate, "freeze_snapshot", boom)
+
+    res = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
+    assert res["status"] == "failed" and res["rolled_back"] is True, res
+    assert open(cfg_path, encoding="utf-8").read() == before_text, "配置文件必须逐字还原"
+    after = json.load(open(cfg_path, encoding="utf-8"))
+    assert after["scoring"]["pass_line"] == 60 and after["config_version"] == "1", "线未动、配置世代未动"
+    assert after["scoring"].get("calibration_version", 0) == 0, "cv 也不能动"
+    assert not os.path.exists(res["snapshot_path"]), "不许留半写快照"
+    kept = db.fetch_one("""SELECT count(*) AS n FROM job_config
+                            WHERE job_id = %s AND config_version = '1'""", (JOB_ID,))
+    assert kept["n"] == 1, "配置世代不变 → 当前世代那行必须还在（不能删）"
+    assert db.fetch_one("""SELECT count(*) AS n FROM job_config
+                            WHERE job_id = %s AND config_version = '2'""", (JOB_ID,))["n"] == 0
+    assert db.fetch_one("""SELECT count(*) AS n FROM calibration
+                            WHERE job_id = %s AND status = 'applied'""", (JOB_ID,))["n"] == 0, "不能留 applied 行"
+    fail = db.fetch_one("""SELECT status, reason FROM calibration
+                            WHERE job_id = %s ORDER BY created_at DESC LIMIT 1""", (JOB_ID,))
+    assert fail["status"] == "failed" and "整体回滚" in fail["reason"]
+    assert calibrate.rollback(cfg_path)["status"] == "nothing_to_rollback", "没生效就不该有东西可回滚"
+
+
+def test_dry_run_does_not_freeze_and_path_matches_apply(env) -> None:
+    """dry-run 不写快照，但打印/返回的"将冻结到"路径必须与真 apply 一致。"""
+    cfg, apps, cfg_path, tmp = env
+    dry = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7, dry_run=True)
+    assert dry["status"] == "dry_run"
+    assert not os.path.exists(dry["snapshot_path"]), "dry-run 不许写快照"
+    assert db.fetch_one("""SELECT count(*) AS n FROM calibration
+                            WHERE job_id = %s""", (JOB_ID,))["n"] == 0
+    real = calibrate.run(cfg_path, trigger="manual", leak_budget=0.7)
+    assert real["status"] == "applied"
+    assert dry["snapshot_path"] == real["snapshot_path"], "dry-run 报的路径必须就是 apply 实际写的路径"
+    assert dry["after_line"] == real["after_line"]
 
 
 def test_stability_gate_blocks_calibration(env) -> None:

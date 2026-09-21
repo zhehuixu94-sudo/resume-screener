@@ -30,6 +30,7 @@ from app.llm.client import SiliconFlowClient  # noqa: E402
 from app.pipeline.evaluate import label_items  # noqa: E402
 from app.pipeline.parse import parse_resume  # noqa: E402
 from app.pipeline.rules import rule_layer  # noqa: E402
+from tools.sample_paths import resume_search_dirs  # noqa: E402
 from app.pipeline.rules import RELEVANCE_W, DIFFICULTY_W  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,8 +83,8 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=9, help="标注次数（建议 3 的倍数）")
     ap.add_argument("--group", type=int, default=3, help="中位数法的分组大小（每组算一次中位数分数）")
     ap.add_argument("--model", default=os.environ.get("RESUME_MODEL") or "Qwen/Qwen3.5-35B-A3B")
-    ap.add_argument("--search", nargs="*", default=["local/samples", "local/samples_all",
-                    r"C:\Users\user\Desktop\毕设及简历", r"C:\Users\user\Desktop"])
+    ap.add_argument("--search", nargs="*", default=resume_search_dirs(),
+                    help="按文件名找简历的目录（默认仓库内 local/samples* + 环境变量 RESUME_SEARCH_DIRS）")
     ap.add_argument("--out", default="out/stability")
     a = ap.parse_args()
 

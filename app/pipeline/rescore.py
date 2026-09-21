@@ -16,7 +16,7 @@ from ..store import db
 from .rules import decide, sync_decisions_with_evidence
 from .score import gate_score
 from .stability import apply_gate, latest as stability_latest
-from .weighted_total import bonus_raw, percentile_rank, rank_key
+from .weighted_total import bonus_raw_v2, percentile_rank, rank_key, skill_words
 
 
 def _load(job: JobConfig) -> list[dict]:
@@ -45,13 +45,19 @@ def rescore_batch(job: JobConfig, *, apply: bool = True, verbose: bool = True) -
                 import json
                 payload = json.loads(payload)
             texts = [e.get("text") or "" for e in (payload.get("evidence") or [])]
-        dims = [{"id": d.id, "items": [{"relevance_score": i.relevance_score} for i in d.items]}
+        # ⚠️ 加分项原始量已换成定稿口径 G2 = Σq/√n（q 由证据文本 + 岗位技能词典纯代码算出）：
+        #    旧口径 Σ相关度×难度 与「证据条数」ρ=+0.73，等于按条数发分 →
+        #    这里必须传**证据文本**（不是 difficulty_score），否则分位算的是另一个量。
+        dims = [{"id": d.id,
+                 "items": [{"relevance_score": i.relevance_score,
+                            "difficulty_score": i.difficulty_score} for i in d.items]}
                 for d in ev.dimensions]
         loaded.append((r["application_id"], ev, {"dims": dims, "texts": texts}, []))
 
-    # 一次算整批：加分项原始量 → 分位
-    rank = percentile_rank({str(ev.resume_id): bonus_raw(ctx["dims"])
-                            for _, ev, ctx, _ in loaded})
+    # 一次算整批：加分项原始量（G2）→ 本批分位
+    skills = skill_words(job)
+    raw_by_resume = {str(ev.resume_id): bonus_raw_v2(ctx["texts"], skills) for _, ev, ctx, _ in loaded}
+    rank = percentile_rank(raw_by_resume)
 
     stats = {"n": len(loaded), "decision_changed": 0, "score_changed": 0, "moves": {}}
     updated: list[tuple[int, Evaluation]] = []
@@ -62,7 +68,8 @@ def rescore_batch(job: JobConfig, *, apply: bool = True, verbose: bool = True) -
         outcome = decide(job, total, ev.llm_compare, ev.fit, ev.stage_status, set(anchored),
                          ev.hard_filters,
                          dim_points={d.id: d.points for d in ev.dimensions},
-                         bonus_names={b.name for b in ev.bonus_hits})
+                         bonus_names={b.name for b in ev.bonus_hits},
+                         fluff_rate=parts.get("fluff_rate"), score_base=parts.get("base"))
         outcome = sync_decisions_with_evidence(outcome, anchored,
                                                [d.best_span_id or "" for d in ev.dimensions if d.points > 0])
         outcome = apply_gate(outcome, stability_latest(job.job_id, job.config_version),

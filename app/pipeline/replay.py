@@ -13,6 +13,7 @@ from ..contracts.resume_parse import ResumeParse
 from ..store import db
 from .equal_split import equal_split_outcome
 from .hard_filters import check_hard_filters
+from .honesty import resume_signals
 from .rules import bonus_layer, decide, rule_layer, sync_decisions_with_evidence
 from .score import dimensions_from_labeled, gate_score
 from .stability import apply_gate, latest as stability_latest
@@ -81,9 +82,10 @@ def decide_with_line(cfg: JobConfig, row: dict, line: float, band: float,
     anchored = {c.span_id: c.anchored for c in old.cited_evidence}
     total, _ = gate_score(cfg2, dimensions_from_labeled(cfg2, labeled),
                           [e.text for e in parse.evidence], bonus_rank=bonus_rank)
+    fluff = resume_signals([e.text for e in parse.evidence]).get("fluff_rate")
     outcome = decide(cfg2, total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
-                     bonus_names={b.name for b in bonus})
+                     bonus_names={b.name for b in bonus}, fluff_rate=fluff)
     outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     return _finish(cfg, outcome, gate=gate).decision
 
@@ -108,8 +110,9 @@ def decide_with_equal_split(cfg: JobConfig, row: dict, line: float, band: float,
     bonus = bonus_layer(cfg2, parse, row["labeled"])
     hard = check_hard_filters(cfg2, parse, old.llm_compare)
     anchored = {c.span_id: c.anchored for c in old.cited_evidence}
+    fluff2 = resume_signals([e.text for e in parse.evidence]).get("fluff_rate")
     outcome = decide(cfg2, rules.base_total, old.llm_compare, old.fit, old.stage_status, set(anchored), hard,
                      dim_points={d.id: d.points for d in rules.dimensions},
-                     bonus_names={b.name for b in bonus})
+                     bonus_names={b.name for b in bonus}, fluff_rate=fluff2)
     outcome = sync_decisions_with_evidence(outcome, anchored, [d.best_span_id or "" for d in rules.dimensions if d.points > 0])
     return _finish(cfg, outcome, gate=gate).decision

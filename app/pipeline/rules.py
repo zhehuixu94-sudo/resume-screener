@@ -168,7 +168,9 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
            stage_status: dict[str, str], anchored_span_ids: set[str],
            hard_filters: list[HardFilterResult] | None = None,
            dim_points: dict[str, float] | None = None,
-           bonus_names: set[str] | None = None) -> DecisionOutcome:
+           bonus_names: set[str] | None = None,
+           fluff_rate: float | None = None,
+           score_base: float | None = None) -> DecisionOutcome:
     """三段带 + 双通道判定。
 
     hard_filters 由 `pipeline.hard_filters.check_hard_filters()` 规则层给出（三态）：
@@ -176,12 +178,39 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
       unknown → 转人工（证据不足，不许淘汰）
       pass    → 继续走分数判定
     模型自己说"触发了门槛"但规则层判通过时 → 转人工（两路打架一律交人，不自动放行也不自动淘汰）。
+
+    fluff_rate：空话率（`score_parts.fluff_rate`）。只被 `scoring.guard_review` 用到——
+    它拦的是「证据干净但证据量少」的件别被一票淘汰（见 GuardReview 的说明）。
+    score_base：**基础项**（`score_parts.base`，60 分制）。⚠️ 注意 `base_total` 参数名是历史遗留，
+    它其实是**判定总分**；`guard_review.min_base` 比的是基础项，必须单独传进来（别拿总分冒充，
+    实测踩过：reason 里写"基础项 52.15"而实际基础项只有 37.95 —— 设定值与生效值对不上）。
     """
     sc = job.scoring
     pass_thr = sc.pass_threshold()      # 配置里写的自动达标线 = 生效值（见 Scoring.pass_threshold）
     rej_thr = sc.reject_threshold()
     conflicts: list[Conflict] = []
     hard = hard_filters or []
+
+    def _guard_hit() -> bool:
+        """「证据干净但证据量少」兜底是否命中（只拦自动淘汰，只降不升）。
+
+        三个量各按各的口径比：**基础项** ≥ min_base、**空话率** ≤ max_fluff_rate、
+        且这份本来要被自动淘汰（总分 < 线−band）。
+        """
+        g = sc.guard_review
+        return bool(g.enabled and fluff_rate is not None and score_base is not None
+                    and float(fluff_rate) <= g.max_fluff_rate
+                    and float(score_base) >= g.min_base and base_total < rej_thr)
+
+    def _guard_outcome() -> DecisionOutcome:
+        g = sc.guard_review
+        txt = (f"证据干净（空话率 {float(fluff_rate):.2f} ≤ {g.max_fluff_rate:g}）"
+               f"但证据量少（基础项 {float(score_base):.1f} ≥ {g.min_base:g}，判定分 {base_total:.1f}）"
+               f"→ 转人工（不做不可逆淘汰）")
+        conflicts.append(Conflict(type="clean_but_thin", detail=txt))
+        return DecisionOutcome(verdict="边缘", decision="manual_review", reason=txt,
+                               conflicts=conflicts, hard_filters=hard)
+
 
     llm_v = compare.verdict if compare else "边缘"
     conf = compare.confidence if compare else 0.0
@@ -278,6 +307,8 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
                 conflicts.append(Conflict(type="edge_band_low_reject",
                                           detail=f"整体边缘但规则分 {base_total} < {rej_thr}"
                                                  f"（策略 reject_border_when_low=true）"))
+                if _guard_hit():                      # 证据干净但量少 → 不淘汰，交人
+                    return _guard_outcome()
                 return DecisionOutcome(verdict="不达标", decision="auto_reject",
                                        reason=f"整体评估边缘且规则分 {base_total} < {rej_thr}"
                                               f"（达标线 {sc.pass_line} − {sc.band_width}）→ 按岗位策略自动淘汰，可申诉",
@@ -299,6 +330,12 @@ def decide(job: JobConfig, base_total: float, compare: LlmCompareOutput | None, 
         return DecisionOutcome(verdict="边缘", decision="manual_review",
                                reason=f"整体不达标且规则分 {base_total} < {rej_thr}，但置信度 {conf} 低于 {sc.confidence_floor} → 转人工",
                                conflicts=conflicts, hard_filters=hard)
+
+    # 「证据干净但证据量少」兜底：这一句必须在所有 auto_reject 之前——
+    # 它拦的是"分数低是没东西可写、不是写了空话"的那批（详见 contracts.GuardReview）。
+    # 注意：不拦 fit 分支的 auto_reject（方向不符是真不该看的件，那是另一个判据）。
+    if _guard_hit():
+        return _guard_outcome()
 
     return DecisionOutcome(verdict="不达标", decision="auto_reject",
                            reason=f"整体判定不达标且规则分 {base_total} < {rej_thr}（达标线 {sc.pass_line} − {sc.band_width}）→ 自动淘汰，可申诉",

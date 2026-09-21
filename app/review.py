@@ -66,9 +66,187 @@ def strata_of(score: float, line: float, band: float) -> str:
     return "far"                                   # 远端
 
 
+# ---------------------------------------------------------------- 抽检池与标记位（路线 A）
+# 池子从「只有自动淘汰件」扩成两类，各自带标记；不复制数据（避免双写漂移）——都从同一张 evaluation 读。
+# 背景：冷启动期自动淘汰件少，实测池子 0~33 件 → 攒不出人工标注 → 校准永远「样本不足」。空转比关掉更危险。
+SOURCE_AUTO_REJECT = "auto_reject"          # 自动淘汰件（漏放风险的直接来源，唯一能进校准池的一类）
+SOURCE_MANUAL_REVIEW = "manual_review"      # 其余转人工件（按分数降序抽）
+SOURCE_AUTO_PASS = "auto_pass"              # 自动达标件（默认不抽；--include-auto-pass 才纳入）
+SOURCE_BORDERLINE = "borderline"            # 擦线件：|分 − 自动达标线| ≤ 2
+SOURCE_MODEL_CONFLICT = "model_conflict"    # 模型两路判据互相打架
+SOURCE_HARD_GATE_UNKNOWN = "hard_gate_unknown"   # 硬门槛证据不足（unknown）——人工最容易补判
+
+# 抽样优先级（用户的路线 A 口径）：擦线 → 打架 → 硬门槛 unknown → 其余按分数降序
+PRIORITY_CLASSES = ("borderline", "model_conflict", "hard_gate_unknown", "descending")
+PRIORITY_LABEL = {"borderline": "擦线", "model_conflict": "打架",
+                  "hard_gate_unknown": "unknown", "descending": "降序"}
+BORDERLINE_WIDTH = 2.0                      # 擦线带宽：|分 − 线| ≤ 2
+# ⚠️「打架」只认这两类**判据冲突**。实测教训：把 `edge_band` 也算进来会让 155/236 件都变成「打架」
+#    （它只是"分数落在线内"的标记，不是两路矛盾）——一个标记 96% 的件都命中，等于没有优先级。
+CONFLICT_TYPES = ("llm_vs_rule", "fit_vs_verdict")
+
+
+def classify_source(decision: str, score: float, line: float, conflict_types: set[str],
+                    hard_gate_unknown: bool) -> str:
+    """一条件属于哪一类（决定能不能进校准池）。互斥、有优先级、可复现。
+
+    优先级：auto_reject > 擦线 > 打架 > 硬门槛 unknown > auto_pass > manual_review
+    （auto_reject 优先是因为它是唯一能进校准池的一类，标记不能丢；其余按抽样优先级排。）
+    """
+    if decision == "auto_reject":
+        return SOURCE_AUTO_REJECT
+    if abs(float(score) - float(line)) <= BORDERLINE_WIDTH:
+        return SOURCE_BORDERLINE
+    if set(conflict_types) & set(CONFLICT_TYPES):
+        return SOURCE_MODEL_CONFLICT
+    if hard_gate_unknown:
+        return SOURCE_HARD_GATE_UNKNOWN
+    if decision == "auto_pass":
+        return SOURCE_AUTO_PASS
+    return SOURCE_MANUAL_REVIEW
+
+
+def priority_class(source: str, decision: str, conflict_types: set[str], hard_gate_unknown: bool) -> str:
+    """抽样优先级类别（与 source 解耦：auto_reject 是"哪一类"，它仍可能有打架/unknown 等抽取优先级）。"""
+    if source == SOURCE_BORDERLINE:
+        return "borderline"                                   # ① 擦线件（最可能被判错）
+    if set(conflict_types) & set(CONFLICT_TYPES):
+        return "model_conflict"                               # ② 模型内部打架
+    if hard_gate_unknown:
+        return "hard_gate_unknown"                            # ③ 硬门槛证据不足
+    return "descending"                                       # ④ 其余按分数降序
+
+
+def _row_labels(r: dict, cfg: JobConfig) -> dict:
+    """给一行候选算出 source / priority_class / 是否能进校准池（纯函数，离线与线上共用）。"""
+    ev = r.get("payload") or {}
+    ct = {c.get("type") for c in (ev.get("conflicts") or [])}
+    unk = any(h.get("result") == "unknown" for h in (ev.get("hard_filters") or []))
+    line = float(cfg.scoring.pass_threshold())
+    src = classify_source(r["decision"], float(r["gate_score"] or 0), line, ct, unk)
+    return {"source": src, "priority_class": priority_class(src, r["decision"], ct, unk),
+            "calibration_eligible_candidate": src == SOURCE_AUTO_REJECT,
+            "conflicts": sorted(ct), "hard_gate_unknown": unk}
+
+
+def _pick_by_priority(rows: list[dict], cfg: JobConfig, want: int | None) -> tuple[list[dict], dict]:
+    """按优先级抽：擦线 → 打架 → unknown → 其余分数降序；并**保证非空类别每类至少 1 条**。
+
+    为什么要"每类保底 1 条"：纯按优先级排，前两类（擦线+打架）会把名额吃光，
+    降序类与 unknown 类永远进不了抽样 → 分布检查看起来"只有两类非空"，
+    实际是抽取器把它们排除了，而不是本批没有。
+    """
+    labeled = []
+    for r in rows:
+        lab = _row_labels(r, cfg)
+        labeled.append({**r, **lab})
+    buckets = {k: [] for k in PRIORITY_CLASSES}
+    for r in labeled:
+        buckets[r["priority_class"]].append(r)
+    for k in buckets:
+        buckets[k].sort(key=lambda z: (-float(z["gate_score"] or 0), str(z["file_name"])))
+    total = sum(len(v) for v in buckets.values())
+    if want is None or want >= total:
+        picked = [r for k in PRIORITY_CLASSES for r in buckets[k]]
+        return picked, {"pool": total, "class_size": {k: len(v) for k, v in buckets.items()},
+                        "class_picked": {k: len(buckets[k]) for k in PRIORITY_CLASSES}}
+    picked, taken = [], {k: 0 for k in PRIORITY_CLASSES}
+    for k in PRIORITY_CLASSES:                                 # 第一轮：每类保底 1 条
+        if buckets[k] and len(picked) < want:
+            picked.append(buckets[k][0]); taken[k] = 1
+    for k in PRIORITY_CLASSES:                                 # 第二轮：按优先级填满
+        for r in buckets[k][taken[k]:]:
+            if len(picked) >= want:
+                break
+            picked.append(r); taken[k] += 1
+    picked.sort(key=lambda z: (PRIORITY_CLASSES.index(z["priority_class"]),
+                               -float(z["gate_score"] or 0), str(z["file_name"])))
+    return picked, {"pool": total, "class_size": {k: len(v) for k, v in buckets.items()},
+                    "class_picked": taken}
+
+
+# 抽样配额（用户口径，want=40 时的一版）：样本要**同时服务两个目的**——
+#   · 校准池只认 auto_reject（33 件，抽 30% = 10 条）；
+#   · 其余类是"发现型"（找规则问题，不进校准池）；
+#   · 纯按优先级填充会让打架类吃掉 85% 的名额（实测 34/40），那是"优先级列表"不是抽样：
+#     打架类抽样率 31%、降序类 0.6% → 抽样率差 50 倍，用它推断池子结构是错的。
+# 配额按 **source** 口径给（manual_review ≡ 降序类：转人工件里不擦线/不打架/不 unknown 的，按定义就在降序类）。
+SAMPLE_WEIGHTS = {
+    SOURCE_AUTO_REJECT: 10,          # 校准池来源（全池 33 → 抽 30%）
+    SOURCE_BORDERLINE: 5,            # 擦线件：全抽（池子里只有 5）
+    SOURCE_MODEL_CONFLICT: 10,       # 发现型：降采样（池子 48）
+    SOURCE_MANUAL_REVIEW: 15,        # 降序类：主体必须覆盖（池子 150）
+    SOURCE_HARD_GATE_UNKNOWN: 0,     # 本批为空；不为凑分布造语料
+    SOURCE_AUTO_PASS: 0,             # 默认不抽自动达标件
+}
+MAX_BUCKET_SHARE = 0.40              # 单一类占比上限（超过说明又变回优先级列表了）
+
+
+def _allocate(want: int | None, weights: dict[str, int], sizes: dict[str, int]) -> dict[str, int]:
+    """按权重配额分配名额：先按比例取整 → 余数按小数部分补 → 再按权重顺序补 → 不足则让位。
+
+    另外保留**非空类保底 1 条**（用户口径）：某类池子非空但比例算下来是 0 时，
+    从权重最低且有余量的类挪一个名额给它——否则"本类为空"和"本类被抽取器排除"分不清。
+    """
+    total = sum(int(v or 0) for v in sizes.values())
+    if want is None or want >= total:
+        return {k: int(sizes.get(k, 0) or 0) for k in weights}
+    tw = sum(w for k, w in weights.items() if int(sizes.get(k, 0) or 0) > 0) or 1
+    ideal = {k: (want * w / tw if int(sizes.get(k, 0) or 0) > 0 else 0.0) for k, w in weights.items()}
+    alloc = {k: min(int(ideal[k]), int(sizes.get(k, 0) or 0)) for k in weights}
+    left = want - sum(alloc.values())
+    for k in sorted(weights, key=lambda z: (-(ideal[z] - int(ideal[z])), -weights.get(z, 0), z)):
+        if left <= 0:
+            break
+        if int(sizes.get(k, 0) or 0) > alloc[k]:
+            alloc[k] += 1
+            left -= 1
+    while left > 0:
+        moved = False
+        for k in sorted(weights, key=lambda z: (-weights.get(z, 0), z)):
+            if left <= 0:
+                break
+            if int(sizes.get(k, 0) or 0) > alloc[k]:
+                alloc[k] += 1
+                left -= 1
+                moved = True
+        if not moved:
+            break
+    for k, sz in sizes.items():                       # 非空类保底 1 条
+        if int(sz or 0) > 0 and alloc.get(k, 0) == 0:
+            donors = [d for d in weights if alloc.get(d, 0) > 1]
+            if donors:
+                d = min(donors, key=lambda z: (weights.get(z, 0), z))
+                alloc[d] -= 1
+                alloc[k] = 1
+    return alloc
+
+
+def _pick_by_quota(rows: list[dict], cfg: JobConfig, want: int | None,
+                   weights: dict[str, int] | None = None) -> tuple[list[dict], dict]:
+    """按配额抽样：每个 source 桶按权重拿名额，桶内按（优先级类别 → 分数降序）排序。"""
+    labeled = [{**r, **_row_labels(r, cfg)} for r in rows]
+    w = weights or SAMPLE_WEIGHTS
+    buckets: dict[str, list[dict]] = {k: [] for k in w}
+    for r in labeled:
+        buckets.setdefault(r["source"], []).append(r)
+    sizes = {k: len(v) for k, v in buckets.items()}
+    alloc = _allocate(want, w, sizes)
+    picked: list[dict] = []
+    for k, need in alloc.items():
+        buckets[k].sort(key=lambda z: (PRIORITY_CLASSES.index(z["priority_class"]),
+                                       -float(z["gate_score"] or 0), str(z["file_name"])))
+        picked += buckets[k][:need]
+    picked.sort(key=lambda z: (list(w).index(z["source"]) if z["source"] in w else 99,
+                               PRIORITY_CLASSES.index(z["priority_class"]),
+                               -float(z["gate_score"] or 0), str(z["file_name"])))
+    return picked, {"pool": len(labeled), "class_size": sizes, "class_picked": alloc}
+
+
 # ---------------------------------------------------------------- 池子
 POOL_SQL = """
 SELECT a.application_id, a.resume_id, r.file_name, r.file_path, e.gate_score, e.verdict, e.decision,
+       e.payload,
        EXISTS (SELECT 1 FROM spot_check_item i
                 WHERE i.application_id = a.application_id AND i.state IN ('pending', 'passed', 'rejected'))
          AS drawn_before,
@@ -78,15 +256,25 @@ SELECT a.application_id, a.resume_id, r.file_name, r.file_path, e.gate_score, e.
   JOIN evaluation e ON e.application_id = a.application_id
   JOIN resume r ON r.resume_id = a.resume_id
  WHERE a.company_id = %s AND a.job_id = %s AND a.config_version = %s
-   AND e.decision = 'auto_reject'
+   AND e.decision = ANY(%s)
  ORDER BY e.gate_score ASC, random()
 """
 
+DEFAULT_POOL_SOURCES = (SOURCE_AUTO_REJECT, SOURCE_MANUAL_REVIEW)
 
-def pool(cfg: JobConfig) -> list[dict]:
-    """自动淘汰库现状：所有自动淘汰、且还没有人工结论的件（已复核的不再出现在池子里）。"""
-    rows = db.fetch_all(POOL_SQL, (cfg.company_id, cfg.job_id, cfg.config_version))
-    return [r for r in rows if not r["reviewed"]]
+
+def pool(cfg: JobConfig, *, sources: tuple[str, ...] = DEFAULT_POOL_SOURCES,
+         with_labels: bool = True) -> list[dict]:
+    """抽检池：还没人工结论的件（已复核的不再出现）。
+
+    默认两类 = 自动淘汰件（漏放风险的直接来源）+ 转人工件（冷启动期唯一可观的量）。
+    自动达标件默认不进池（有稳定性闸门兜着，抽检成本留给风险段）；要抽就显式传 sources。
+    """
+    rows = db.fetch_all(POOL_SQL, (cfg.company_id, cfg.job_id, cfg.config_version, list(sources)))
+    out = [r for r in rows if not r["reviewed"]]
+    if with_labels:
+        out = [{**r, **_row_labels(r, cfg)} for r in out]
+    return out
 
 
 def manual_reject_library(cfg: JobConfig) -> list[dict]:
@@ -155,8 +343,11 @@ def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = No
     retry = [r for r in rows if r["drawn_before"]]            # 抽过但没人看过的，可以再抽
     ordered = fresh + retry
     if stratified:
-        picked, info = _pick_stratified(ordered, cfg, want)
+        # 路线 A 配额制：校准池（auto_reject 30%）+ 擦线全抽 + 打架降采样 + 降序覆盖主体
+        picked, info = _pick_by_quota(ordered, cfg, want)
         want_eff = len(picked)
+        info["strata_size"] = info.get("class_size", {})
+        info["strata_quota"] = info.get("class_picked", {})
     else:
         want = DEFAULT_WANT if want is None else want
         picked, info, want_eff = ordered[:want], {"strata_size": {}, "strata_quota": {}, "pool": len(rows)}, want
@@ -173,13 +364,16 @@ def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = No
     batch_id = int(batch["batch_id"])
 
     for r in picked:
+        # 标记位随抽检一起落库：source 决定能不能进校准池，priority_class 是抽样优先级（审计用）
         db.execute(
             """INSERT INTO spot_check_item (batch_id, application_id, resume_id, job_id, config_version,
-                                            check_date, score, state)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
-               ON CONFLICT (batch_id, application_id) DO NOTHING""",
+                                            check_date, score, state, source, priority_class,
+                                            calibration_eligible)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, false)
+               ON CONFLICT (batch_id, application_id) DO UPDATE
+                 SET source = EXCLUDED.source, priority_class = EXCLUDED.priority_class""",
             (batch_id, r["application_id"], r["resume_id"], cfg.job_id, cfg.config_version, day,
-             r["gate_score"]))
+             r["gate_score"], r.get("source", ""), r.get("priority_class", "")))
 
     Repository(cfg.company_id).audit("spot_check_draw", "job", f"{cfg.job_id}@{cfg.config_version}",
                                      {"date": day, "drawn": len(picked), "pool": len(rows), "want": want,
@@ -188,7 +382,9 @@ def draw(cfg: JobConfig, *, want: int | None = None, check_date: str | None = No
             "strata_size": info.get("strata_size", {}), "strata_quota": info.get("strata_quota", {}),
             "expired_prev": int((expired or {}).get("n", 0)),
             "items": [{"application_id": r["application_id"], "file_name": r["file_name"],
-                       "score": r["gate_score"],
+                       "score": r["gate_score"], "source": r.get("source", ""),
+                       "priority_class": r.get("priority_class", ""),
+                       "calibration_eligible_candidate": bool(r.get("calibration_eligible_candidate")),
                        "stratum": strata_of(float(r["gate_score"]), float(cfg.scoring.pass_line),
                                             float(cfg.scoring.band_width))} for r in picked]}
 
@@ -217,7 +413,113 @@ def listing(cfg: JobConfig, *, check_date: str | None = None) -> list[dict]:
         (cfg.job_id, day))
 
 
-# ---------------------------------------------------------------- 复核动作
+# ---------------------------------------------------------------- 复核结论（步骤 4）与校准池准入（步骤 5）
+REVIEW_VERDICTS = ("reject", "keep", "uncertain")
+REVIEW_VERDICT_CN = {"reject": "确实该淘汰", "keep": "该留（系统判错了）", "uncertain": "拿不准"}
+DEFAULT_SAMPLE_FILE = "out/audit_sample_v1.csv"      # 冻结的抽检样本（回灌的唯一输入源）
+VERDICT_TO_ACTION = {"reject": "reject", "keep": "pass", "uncertain": "uncertain"}
+
+
+def load_frozen_sample(path: str = DEFAULT_SAMPLE_FILE) -> tuple[dict[int, dict], str]:
+    """读冻结的抽检样本 CSV → {application_id: 行}，并返回文件指纹（sha256 前 16 位）。
+
+    为什么回灌必须认样本文件：抽检结论只有落在**冻结样本**上才有抽样学意义；
+    事后手工挑的件进校准池 = 用非随机样本标线，是把线拉歪的经典姿势。
+    """
+    import csv as _csv
+    import hashlib
+    if not os.path.exists(path):
+        raise SystemExit(f"找不到冻结样本 {path}（先跑 tools/audit_sample.py 生成并冻结）")
+    blob = open(path, "rb").read()
+    fp = hashlib.sha256(blob).hexdigest()[:16]
+    out: dict[int, dict] = {}
+    with open(path, encoding="utf-8-sig") as f:
+        for r in _csv.DictReader(f):
+            out[int(r["application_id"])] = r
+    return out, fp
+
+
+def calibration_decision(source: str, verdict: str, reviewer: str, review_ts) -> tuple[bool, str]:
+    """**回灌判据的唯一入口**：只有 `auto_reject` + `reject`(确实该淘汰) + 复核人/时间非空 → 置真。
+
+    用户口径：转人工件的复核结论一律不进校准池（它不是"系统的漏放"，而是"系统没能自动判断"，
+    混进去会把线拉歪）。所以这里对非 auto_reject 的行**即使 verdict=reject 也拒绝置真**。
+    """
+    if source != SOURCE_AUTO_REJECT:
+        if verdict == "reject":
+            return False, f"非 auto_reject（source={source or '空'}）→ 复核结论不进校准池"
+        return False, f"source={source or '空'} 不是校准池来源"
+    if verdict != "reject":
+        if verdict == "keep":
+            return False, "auto_reject + keep = 确认漏放（单列 leak 信号，不进校准池）"
+        return False, f"review_verdict={verdict or '空'} → 未复核/拿不准，不置真"
+    if not (reviewer or "").strip():
+        return False, "reviewer 为空 → 不置真"
+    if not review_ts:
+        return False, "review_ts 为空 → 不置真"
+    return True, "auto_reject + reject + 复核人/时间齐全 → 进校准池"
+
+
+def record_verdict(cfg: JobConfig, application_id: int, verdict: str, reviewer: str, *,
+                   note: str = "", sample_file: str = DEFAULT_SAMPLE_FILE,
+                   archive_dir: str = DEFAULT_ARCHIVE_DIR, day: str | None = None,
+                   now: str | None = None) -> dict:
+    """复核结论落库（三列）+ 顺带记一条 review_decision（动作映射见 VERDICT_TO_ACTION）。
+
+    三条硬校验（步骤 4）：
+      · review_verdict 必须在枚举里；
+      · reviewer / review_ts 非空；
+      · 样本必须来自冻结的 audit_sample_v1.csv（不是事后挑件）。
+    并且**强制 calibration_eligible=false**——只有回灌脚本能置真。
+    """
+    if verdict not in REVIEW_VERDICTS:
+        raise SystemExit(f"review_verdict 只能是 {REVIEW_VERDICTS}，收到 {verdict!r}")
+    if not (reviewer or "").strip():
+        raise SystemExit("reviewer 不能为空（没有署名的人工结论无法追溯）")
+    sample, fp = load_frozen_sample(sample_file)
+    if int(application_id) not in sample:
+        raise SystemExit(f"application_id={application_id} 不在冻结样本 {sample_file}（指纹 {fp}）里 → 拒绝落库")
+    row = db.fetch_one(
+        """SELECT i.item_id, i.source, i.state, r.resume_id, e.decision, e.gate_score
+             FROM spot_check_item i
+             JOIN application a ON a.application_id = i.application_id
+             LEFT JOIN resume r ON r.resume_id = a.resume_id
+             LEFT JOIN evaluation e ON e.application_id = a.application_id
+            WHERE i.application_id = %s AND i.job_id = %s AND i.state <> 'expired'
+            ORDER BY i.item_id DESC LIMIT 1""", (application_id, cfg.job_id))
+    if not row:
+        raise SystemExit(f"application_id={application_id} 不在 {cfg.job_id} 的抽检清单里")
+    ts = now or datetime.now(CN_TZ).isoformat(timespec="seconds")
+    state = {"reject": "rejected", "keep": "passed", "uncertain": "pending"}[verdict]
+    db.execute(
+        """UPDATE spot_check_item
+              SET review_verdict = %s, reviewer = %s, review_ts = %s, state = %s,
+                  calibration_eligible = false, reviewed_at = now()
+            WHERE application_id = %s AND job_id = %s""",
+        (verdict, reviewer, ts, state, application_id, cfg.job_id))
+    archived = ""
+    if verdict in ("reject", "keep"):
+        archived = archive_resume(cfg, application_id, archive_dir=archive_dir, day=day,
+                                  top=ARCHIVE_REJECT_TOP if verdict == "reject" else ARCHIVE_TOP)
+    db.execute(
+        """INSERT INTO review_decision (company_id, application_id, resume_id, job_id, config_version,
+                                        action, source, note, actor, archived_path, created_at)
+           VALUES (%s, %s, %s, %s, %s, %s, 'spot_check', %s, %s, %s, now())""",
+        (cfg.company_id, application_id, row["resume_id"], cfg.job_id, cfg.config_version,
+         VERDICT_TO_ACTION[verdict], note, reviewer, archived))
+    Repository(cfg.company_id).audit("review_verdict", "application", str(application_id),
+                                     {"verdict": verdict, "reviewer": reviewer, "note": note,
+                                      "sample_file": os.path.basename(sample_file), "sample_fp": fp,
+                                      "system_decision": row["decision"],
+                                      "calibration_eligible": False})
+    return {"application_id": application_id, "verdict": verdict, "reviewer": reviewer, "review_ts": ts,
+            "source": row["source"] or "", "system_decision": row["decision"], "archived": archived,
+            "sample_fingerprint": fp,
+            # 漏放信号：系统自动淘汰、人工判该留（按用户口径不进校准池，但要能被统计看见）
+            "leak_signal": (row["source"] == SOURCE_AUTO_REJECT and verdict == "keep"),
+            "calibration_eligible": False}
+
+
 def archive_resume(cfg: JobConfig, application_id: int, *, archive_dir: str = DEFAULT_ARCHIVE_DIR,
                    day: str | None = None, top: str = ARCHIVE_TOP) -> str:
     """归档原件：`<archive_dir>/<顶层目录>/<YYYY-MM-DD>/<原文件名>`。

@@ -27,6 +27,7 @@ from app.pipeline.evaluate import evaluate  # noqa: E402
 from app.pipeline.parse import parse_resume  # noqa: E402
 from app.pipeline.rules import decide, rule_layer, sync_decisions_with_evidence  # noqa: E402
 from app.pipeline.score import gate_score                                            # noqa: E402
+from tools.sample_paths import resume_search_dirs                                    # noqa: E402
 from app.pipeline.stability import MAX_DANGER_FLIP, MAX_SAFE_FLIP, MAX_SCORE_GAP   # noqa: E402
 from app.pipeline.stability import flip_metrics                                    # noqa: E402
 from app.pipeline.stability import record as stability_record                      # noqa: E402
@@ -73,8 +74,8 @@ def main() -> int:
     ap.add_argument("--resumes", nargs="+", required=True, help="简历文件名（会在 local/ 与桌面目录里找）或绝对路径")
     ap.add_argument("--repeat", type=int, default=3)
     ap.add_argument("--model", default=os.environ.get("RESUME_MODEL") or "Qwen/Qwen3.5-35B-A3B")
-    ap.add_argument("--search", nargs="*", default=["local/samples", "local/samples_all",
-                    r"C:\Users\user\Desktop\毕设及简历", r"C:\Users\user\Desktop"], help="按文件名找简历的目录")
+    ap.add_argument("--search", nargs="*", default=resume_search_dirs(),
+                    help="按文件名找简历的目录（默认仓库内 local/samples* + 环境变量 RESUME_SEARCH_DIRS）")
     ap.add_argument("--out", default="out/stability")
     ap.add_argument("--record", action="store_true",
                     help="把结果写进 stability_check 表：**自动淘汰闸门**靠它放行（不写就永远不许自动淘汰）")

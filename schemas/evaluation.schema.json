@@ -138,7 +138,8 @@
             "unanchored_evidence",
             "edge_band",
             "edge_band_low_reject",
-            "stability_gate"
+            "stability_gate",
+            "clean_but_thin"
           ],
           "title": "Type",
           "type": "string"

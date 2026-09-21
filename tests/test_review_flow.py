@@ -76,9 +76,17 @@ def env():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_pool_only_auto_reject(env) -> None:
+def test_pool_defaults_to_two_sources_with_labels(env) -> None:
+    """路线 A：池子默认 = 自动淘汰件 + 转人工件，各自带 source / priority_class / 校准池准入标记。"""
     cfg, apps, _ = env
-    assert {r["application_id"] for r in review.pool(cfg)} == {a["application_id"] for a in apps}
+    rows = review.pool(cfg)
+    assert {r["application_id"] for r in rows} == {a["application_id"] for a in apps}
+    assert all(r["source"] == review.SOURCE_AUTO_REJECT for r in rows), "自动淘汰件必须标 auto_reject"
+    assert all(r["calibration_eligible_candidate"] is True for r in rows)
+    assert all(r["priority_class"] == "descending" for r in rows), "池子里的件距线很远 → 降序类"
+    # 显式只要一类时也能收窄（抽检池不复制数据，靠标记位区分）
+    only_mr = review.pool(cfg, sources=(review.SOURCE_MANUAL_REVIEW,))
+    assert only_mr == [], "本测试环境里没有转人工件"
 
 
 def test_draw_records_shortage_and_respects_want(env) -> None:
@@ -160,28 +168,151 @@ def test_strata_of_classifies_by_distance_to_line(env) -> None:
     assert strata_of(10.0, line, band) == "far"
 
 
-def test_stratified_draw_concentrates_on_near_band(env) -> None:
-    """分层抽检要把人力压在擦线带：给 30 份不同分数的淘汰件，擦线带应被优先抽走。"""
+def test_quota_draw_and_markers(env) -> None:
+    """路线 A 配额抽样：按 source 桶给名额（配额制，不是优先级列表），并把标记位落库。
+
+    旧口径二（优先级填充）已被用户换成配额制：纯按优先级填，打架类吃掉 85% 名额
+    （抽样率 31% vs 降序 0.6%），那是"优先级列表"，不能用来推断池子结构。
+    """
     cfg, apps, tmp = env
-    line, band = float(cfg.scoring.pass_line), float(cfg.scoring.band_width)
-    scores = [line - band - 1] * 6 + [line - band - 15] * 6 + [10.0] * 6     # 6 擦线 / 6 中间 / 6 远端
+    line = float(cfg.scoring.pass_threshold())
     db.execute("DELETE FROM application WHERE job_id = %s", (JOB_ID,))
-    for i, sc in enumerate(scores):
-        rid = f"s{uuid.uuid4().hex[:14]}"
+    specs = ([("borderline", line - 0.5, "manual_review", [])] * 2
+             + [("conflict", line - 20, "manual_review", ["fit_vs_verdict"])] * 2
+             + [("unknown", line - 30, "manual_review", [])] * 2
+             + [("reject", line - 40, "auto_reject", [])] * 2)
+    made = []
+    for i, (kind, sc, decision, ct) in enumerate(specs):
+        rid = f"p{uuid.uuid4().hex[:14]}"
         db.execute("""INSERT INTO resume (resume_id, company_id, file_name, file_sha256, file_format)
-                      VALUES (%s, 'local', %s, %s, 'txt')""", (rid, f"s_{i}.txt", rid))
+                      VALUES (%s, 'local', %s, %s, 'txt')""", (rid, f"p_{i}_{kind}.txt", rid))
         row = db.execute("""INSERT INTO application (company_id, resume_id, job_id, config_version, state)
                             VALUES ('local', %s, %s, %s, 'evaluated') RETURNING application_id""",
                          (rid, JOB_ID, VERSION), returning=True)
+        payload = {"conflicts": [{"type": c, "detail": ""} for c in ct],
+                   "hard_filters": ([{"id": "edu", "name": "学历", "result": "unknown", "reason": "证据不足"}]
+                                    if kind == "unknown" else [])}
         db.execute("""INSERT INTO evaluation (application_id, resume_id, job_id, verdict, decision, base_total,
                                               gate_score, confidence, config_version, model_id, prompt_version,
                                               prompt_hash, aggregation, pass_line, payload)
-                      VALUES (%s, %s, %s, '不达标', 'auto_reject', %s, %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', %s,
-                              '{}'::jsonb)""",
-                   (int(row["application_id"]), rid, JOB_ID, float(sc), float(sc), VERSION, line))
-        apps.append({"application_id": int(row["application_id"]), "resume_id": rid, "file_path": ""})
-    out = review.draw(cfg, check_date="2026-02-01", archive_dir=tmp)
-    assert out["strata_size"]["near"] == 6 and out["strata_size"]["far"] == 6
-    near_drawn = sum(1 for it in out["items"] if it["stratum"] == "near")
-    far_drawn = sum(1 for it in out["items"] if it["stratum"] == "far")
-    assert near_drawn == 3 and far_drawn == 0, f"擦线带该抽 3 份、远端 0 份，实际 {out['items']}"
+                      VALUES (%s, %s, %s, %s, %s, %s, %s, 0.7, %s, 'fake', 'p1', 'h1', 'best', %s, %s::jsonb)""",
+                   (int(row["application_id"]), rid, JOB_ID,
+                    "不达标" if decision == "auto_reject" else "边缘", decision,
+                    float(sc), float(sc), VERSION, line, json.dumps(payload, ensure_ascii=False)))
+        made.append((kind, int(row["application_id"])))
+
+    out = review.draw(cfg, want=4, check_date="2026-02-01", archive_dir=tmp)
+    assert out["drawn"] == 4
+    got_sources = [it["source"] for it in out["items"]]
+    assert set(got_sources) == {"auto_reject", "borderline", "model_conflict", "hard_gate_unknown"}, \
+        f"want=4 且四类都非空 → 配额+保底应让四类各出 1 条，实际 {got_sources}"
+    assert len(set(got_sources)) == len(got_sources), "同一类不许超配额重复占位"
+    rows = db.fetch_all("""SELECT application_id, source, priority_class, calibration_eligible
+                             FROM spot_check_item WHERE job_id = %s AND check_date = '2026-02-01'""",
+                        (JOB_ID,))
+    by_id = {int(r["application_id"]): r for r in rows}
+    assert all(r["calibration_eligible"] is False for r in rows), "未复核 → 一律不许进校准池"
+    for kind, aid in made:
+        if aid not in by_id:
+            continue
+        r = by_id[aid]
+        if kind == "reject":
+            assert r["source"] == "auto_reject"
+        elif kind == "conflict":
+            assert r["source"] == "model_conflict" and r["priority_class"] == "model_conflict"
+        elif kind == "unknown":
+            assert r["source"] == "hard_gate_unknown" and r["priority_class"] == "hard_gate_unknown"
+        else:
+            assert r["source"] == "borderline" and r["priority_class"] == "borderline"
+
+
+# ---------------------------------------------------------------- 步骤 4/5：复核结论落库 + 回灌
+def _write_sample(path: str, rows: list[dict]) -> None:
+    import csv as _c
+    cols = ["application_id", "file_name", "gate_score", "system_decision", "source", "priority_class",
+            "calibration_eligible_candidate", "calibration_eligible"]
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = _c.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for r in rows:
+            w.writerow({**{c: "" for c in cols}, **r})
+
+
+def test_record_verdict_writes_columns_and_forces_false(env) -> None:
+    """步骤 4：三列落库；且**永远**不许由写入路径把 calibration_eligible 置真（哪怕库里已是 true）。"""
+    cfg, apps, tmp = env
+    sample = os.path.join(tmp, "sample.csv")
+    _write_sample(sample, [{"application_id": a["application_id"], "file_name": "r.txt",
+                            "gate_score": 30, "system_decision": "auto_reject",
+                            "source": "auto_reject", "priority_class": "descending"} for a in apps])
+    aid = apps[0]["application_id"]
+    review.draw(cfg, want=5, check_date="2026-03-01", archive_dir=tmp, stratified=False)
+    db.execute("UPDATE spot_check_item SET source='auto_reject', calibration_eligible=true WHERE application_id=%s",
+               (aid,))                                    # 人为把它置真，看写入路径是否复位
+    res = review.record_verdict(cfg, aid, "reject", "hr-徐", note="确实不符合", sample_file=sample,
+                                archive_dir=tmp, day="2026-03-01")
+    assert res["calibration_eligible"] is False and res["review_ts"]
+    row = db.fetch_one("""SELECT review_verdict, reviewer, review_ts, state, calibration_eligible
+                            FROM spot_check_item WHERE application_id=%s""", (aid,))
+    assert row["review_verdict"] == "reject" and row["reviewer"] == "hr-徐"
+    assert row["review_ts"] is not None and row["state"] == "rejected"
+    assert row["calibration_eligible"] is False, "写入路径必须强制 false（只有回灌脚本能置真）"
+
+
+def test_record_verdict_validations(env) -> None:
+    """三条硬校验：枚举、署名、样本必须来自冻结文件。"""
+    cfg, apps, tmp = env
+    sample = os.path.join(tmp, "sample.csv")
+    _write_sample(sample, [{"application_id": apps[0]["application_id"], "source": "auto_reject"}])
+    review.draw(cfg, want=5, check_date="2026-03-02", archive_dir=tmp, stratified=False)
+    with pytest.raises(SystemExit):
+        review.record_verdict(cfg, apps[0]["application_id"], "maybe", "hr", sample_file=sample)
+    with pytest.raises(SystemExit):
+        review.record_verdict(cfg, apps[0]["application_id"], "reject", "  ", sample_file=sample)
+    with pytest.raises(SystemExit):
+        review.record_verdict(cfg, apps[1]["application_id"], "reject", "hr", sample_file=sample)
+
+
+def test_record_verdict_keep_is_leak_signal(env) -> None:
+    """auto_reject + keep = 确认漏放：留信号、不进校准池。"""
+    cfg, apps, tmp = env
+    sample = os.path.join(tmp, "sample.csv")
+    _write_sample(sample, [{"application_id": apps[0]["application_id"], "source": "auto_reject"}])
+    review.draw(cfg, want=5, check_date="2026-03-03", archive_dir=tmp, stratified=False)
+    db.execute("UPDATE spot_check_item SET source='auto_reject' WHERE application_id=%s",
+               (apps[0]["application_id"],))
+    res = review.record_verdict(cfg, apps[0]["application_id"], "keep", "hr-徐", sample_file=sample,
+                                archive_dir=tmp, day="2026-03-03")
+    assert res["leak_signal"] is True and res["calibration_eligible"] is False
+
+
+def test_backfill_tool_dry_run_counts(env, tmp_path) -> None:
+    """步骤 5：回灌 dry-run 计数——只置真 auto_reject+reject，非 auto_reject 一律拒绝。"""
+    import csv as _c
+    import subprocess
+    cfg, apps, tmp = env
+    sample = str(tmp_path / "sample.csv")
+    rows = [{"application_id": apps[0]["application_id"], "file_name": "a.txt", "gate_score": 40,
+             "system_decision": "auto_reject", "source": "auto_reject"},
+            {"application_id": apps[1]["application_id"], "file_name": "b.txt", "gate_score": 60,
+             "system_decision": "manual_review", "source": "manual_review"}]
+    _write_sample(sample, rows)
+    reviews = str(tmp_path / "reviews.csv")
+    with open(reviews, "w", encoding="utf-8-sig", newline="") as f:
+        w = _c.DictWriter(f, fieldnames=["application_id", "review_verdict", "reviewer", "review_ts"])
+        w.writeheader()
+        w.writerow({"application_id": apps[0]["application_id"], "review_verdict": "reject",
+                    "reviewer": "hr-徐", "review_ts": "2026-09-15T10:00:00"})
+        w.writerow({"application_id": apps[1]["application_id"], "review_verdict": "reject",
+                    "reviewer": "hr-徐", "review_ts": "2026-09-15T10:00:00"})   # 非 auto_reject
+    out_csv = str(tmp_path / "pool.csv")
+    p = subprocess.run([sys.executable, "tools/calibration_backfill.py", "--sample", sample,
+                        "--reviews", reviews, "--out", out_csv],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert p.returncode == 0, p.stderr
+    assert "应置真（进校准池）：1" in p.stdout, p.stdout
+    assert "拒绝置真：1" in p.stdout, p.stdout
+    got = list(_c.DictReader(open(out_csv, encoding="utf-8-sig")))
+    ok = {r["file_name"]: r["calibration_eligible_now"] for r in got}
+    assert ok["a.txt"] == "True" and ok["b.txt"] == "False"
+    assert all(r["calibration_eligible_now"] != "True" or r["source"] == "auto_reject" for r in got)

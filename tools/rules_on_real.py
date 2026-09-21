@@ -10,15 +10,13 @@ from app.text.fields import detect_anomalies, summarize
 from app.text.normalize import normalize
 from app.text.timeline import check_timeline
 from app.text.timeline import summarize as tsum
+from tools.sample_paths import resume_extra_files
 
-FILES = [
-    r"C:\Users\user\Desktop\毕设及简历\示例候选人简历3.0.docx",
-    r"C:\Users\user\Desktop\毕设及简历\resume_a.pdf",
-    r"C:\Users\user\Desktop\毕设及简历\resume_b.pdf",
-    r"C:\Users\user\Desktop\毕设及简历\个人简历.docx",
+# 本机简历路径一律走环境变量（RESUME_EXTRA_FILES），不写死在代码里 —— 见 tools/sample_paths.py
+FILES = resume_extra_files(
     "local/samples/resume_001.txt",
     "local/samples/resume_003.txt",
-]
+)
 
 for f in FILES:
     if not os.path.exists(f):

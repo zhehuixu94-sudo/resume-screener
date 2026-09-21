@@ -28,7 +28,9 @@ from typing import Any
 API_URL = "https://api.siliconflow.cn/v1/chat/completions"
 # 密钥来源优先级：环境变量 SILICONFLOW_API_KEY → 本机密钥文件（KEY_FILE，开发期用）。
 ENV_KEY = "SILICONFLOW_API_KEY"
-KEY_FILE = os.environ.get("SILICONFLOW_ENV_FILE", r"D:\Hermes\secrets\openclaw.env")
+# ⚠️ 默认值必须是 None：这里曾写死开发机的绝对路径，等于把本机目录结构随代码公开，
+# 且别人 clone 后会去读一个不属于他的文件。没配 SILICONFLOW_ENV_FILE 就只走环境变量。
+KEY_FILE = os.environ.get("SILICONFLOW_ENV_FILE") or None
 DEFAULT_MODEL = "Qwen/Qwen3.5-122B-A10B"          # 关思考后 8~10s 稳定返回合法 JSON
 # 平台限额：文档口径 L0 档约 50k TPM/模型，但实测（35B-A3B、6 路并发持续 3 分钟）平台接受
 # ~49k 实际 token/min、按「输入+max_tokens」预留口径约 157k/min 仍然全绿；
@@ -141,16 +143,26 @@ class ChatResult:
     raw_headers: dict[str, str] = field(default_factory=dict)
 
 
-def load_api_key(key_file: str = KEY_FILE, name: str = ENV_KEY) -> str:
-    """环境变量优先；没有才去读本机密钥文件（KEY_FILE / SILICONFLOW_ENV_FILE）。"""
+def load_api_key(key_file: str | None = None, name: str = ENV_KEY) -> str:
+    """环境变量优先；没有才去读本机密钥文件（`key_file` 或 `SILICONFLOW_ENV_FILE` 指向的文件）。
+
+    没配任何密钥来源时**报错说清怎么配**，而不是去读一个猜出来的本机路径。
+    """
     if os.environ.get(name):
         return os.environ[name].strip()
-    if not os.path.exists(key_file):
-        raise SystemExit(f"未设置环境变量 {name}，且密钥文件不存在：{key_file}")
-    env = open(key_file, encoding="utf-8", errors="replace").read()
+    path = key_file or os.environ.get("SILICONFLOW_ENV_FILE")
+    if not path:
+        raise SystemExit(
+            f"未设置环境变量 {name}，也没配 SILICONFLOW_ENV_FILE（本机密钥文件）。\n"
+            f"任选其一：\n"
+            f"  1) export {name}=<你的 key>\n"
+            f"  2) export SILICONFLOW_ENV_FILE=/path/to/keys.env（文件里写 {name}=<key>）")
+    if not os.path.exists(path):
+        raise SystemExit(f"未设置环境变量 {name}，且密钥文件不存在：{path}")
+    env = open(path, encoding="utf-8", errors="replace").read()
     m = re.search(rf"{name}\s*=\s*([^\s#]+)", env)
     if not m:
-        raise SystemExit(f"未在 {key_file} 找到 {name}")
+        raise SystemExit(f"未在 {path} 找到 {name}")
     return m.group(1).strip().strip('"')
 
 

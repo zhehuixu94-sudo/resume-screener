@@ -19,6 +19,9 @@
 """
 from __future__ import annotations
 
+import json
+import os
+
 from ..contracts.evaluation import DimensionItemScore, DimensionScore, UnmappedItem
 from ..contracts.job_config import JobConfig
 from .rules import DIFFICULTY_SCORE, RELEVANCE_SCORE, RuleOutcome, _aggregate
@@ -28,11 +31,27 @@ DEFAULT_BUDGET = 60.0                    # 及格总分（= 每个及格项都"�
 
 
 def basic_items_of(job: JobConfig) -> list[str]:
-    """及格项清单：默认取该岗位所有参与评分的维度（权重 > 0）。
+    """及格项清单：优先读**推导 + HR 校对**出来的岗位清单，没有才退回占位（全部参与评分的维度）。
 
-    将来 HR 在界面上勾「基本项」时，这里换成勾选结果（basic_item_label 表）即可，
-    算法本身不用动——这也是把它单独写成函数的原因。
+    清单来源：`tools/derive_basic_items.py` —— 从 HR 给的合格/不合格锚点样本推导「哪些维度必须满足」，
+    HR 逐条勾选校对后写 `config/basic_items_<job_id>.json`（条目级判断另落 `basic_item_label` 表）。
+
+    **占位退回是有代价的**：全部维度当及格项 = 要求"每项都达标"，实测会把分布压成单峰、
+    自动通过恒为 1 件（见 `docs/等分制对照-20260918.md`）。所以这个函数返回占位值时，
+    调用方应当知道当前跑的是"没有标准"的状态。
     """
+    # app/pipeline/equal_split.py → 上三层才是仓库根（上两层会落到 app/）
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(root, "config", f"basic_items_{job.job_id}.json")
+    if os.path.exists(path):
+        try:
+            items = json.load(open(path, encoding="utf-8")).get("basic_items") or []
+        except (json.JSONDecodeError, OSError):
+            items = []
+        valid = {d.id for d in job.dimensions if d.weight > 0}
+        keep = [i for i in items if i in valid]
+        if keep:
+            return keep
     return [d.id for d in job.dimensions if d.weight > 0]
 
 

@@ -14,10 +14,13 @@
 """
 from __future__ import annotations
 
-from .honesty import fluff_penalty, honesty_penalty  # noqa: F401  (honesty_penalty 保留给旧调用/测试)
+import math
+import re
+
+from .honesty import NUM, RESULT, fluff_penalty, honesty_penalty  # noqa: F401  (honesty_penalty 保留给旧调用/测试)
 
 BASE_BUDGET = 60.0          # 基础项满分
-BONUS_BUDGET = 40.0         # 加分项满分
+BONUS_BUDGET = 25.0         # 加分项满分（定稿：scale=25，见下方 bonus_raw_v2）
 PENALTY_CAP = 30.0          # 注水扣分上限
 PENALTY_EXPONENT = 1.5      # 非线性指数（见 honesty.fluff_penalty）
 NEUTRAL_RANK = 0.5          # 单份（拿不到本批分位）时的中性加分位次
@@ -40,9 +43,69 @@ def base_points(dimensions: list[dict], weights: dict[str, float],
 
 
 def bonus_raw(dimensions: list[dict]) -> float:
-    """加分项的原始量：Σ 每条的 相关度 × 难度（不归一、不截断）。"""
+    """加分项的原始量：Σ 每条的 相关度 × 难度（不归一、不截断）。
+
+    ⚠️ **已不是生产口径**（保留给离线对照与旧测试）：实测它与「证据条数」相关系数 ρ=+0.73，
+    实质是条目计数器 → 注水型靠条数多拿高加分。生产改用 `bonus_raw_v2`。
+    """
     return sum(float(i.get("relevance_score") or 0.0) * float(i.get("difficulty_score") or 0.0)
                for d in dimensions for i in (d.get("items") or []))
+
+
+# --------------------------------------------------------------- 加分项原始量（定稿口径 G2）
+# 纯代码特征、0 token：每条证据一个质量分 q，原始量 raw = Σq / √n。
+# 为什么 σ 除以 √n：让「条数多」只按亚线性计分（注水型条数多，除以 n 是过度惩罚、不除又是奖励）。
+# 为什么权重 0.2/0.2/0.6：C（量化结果）是唯一实测能把注水型分出来的量，故占大头（见 honesty 的实测表）。
+GENERIC_SKILLS = ["office", "excel", "word", "ppt", "wps", "erp", "oa", "cad", "python", "sql",
+                  "linux", "英语", "四级", "六级", "普通话", "驾照", "会计", "人力资源", "档案",
+                  "考勤", "社保", "公积金", "财务", "ps", "剪辑", "新媒体", "公文", "报表"]
+ACTIONS_RE = re.compile(r"负责|完成|参与|组织|策划|执行|协调|录入|归档|统计|整理|维护|巡检|优化|"
+                        r"对接|汇报|编制|核对|跟踪|处理|安排|发放|报销|接待|培训|支持|监控|分析")
+MIN_SPAN_CHARS = 6          # 与 honesty.MIN_SPAN_CHARS 同口径：太短的片段不参与统计
+
+
+def skill_words(cfg: "JobConfig") -> list[str]:   # noqa: F821  (仅类型标注，运行时不导入)
+    """岗位技能词典 = 维度 keywords + 加分项 must_match/keywords + 通用词（全部小写去重）。
+
+    ⚠️ 词典只来自**岗位配置**，绝不包含模型自己写的话（模型夸两句就给候选人加分是事故）。
+    """
+    words: list[str] = []
+    for d in getattr(cfg, "dimensions", []) or []:
+        words += list(getattr(d, "keywords", None) or [])
+    for b in getattr(cfg, "bonus", None) or []:
+        for group in (getattr(b, "must_match", None) or []):
+            words += list(group)
+        words += list(getattr(b, "keywords", None) or [])
+    return sorted({str(w).lower() for w in words + GENERIC_SKILLS if str(w).strip()})
+
+
+def _density(hits: int, chars: int) -> float:
+    """按密度归一（每 100 字命中数）再截断到 [0,1]。
+
+    不按命中次数归一：`min(1, hits/2)` 在 2 次命中就饱和 → 每条得分趋近常数、原始量退化成 f(n)。
+    """
+    return min(1.0, hits * 100.0 / max(1, chars))
+
+
+def span_quality(text: str, skills: list[str]) -> float:
+    """单条证据的质量分 q ∈ [0,1]：0.2·技能密度 + 0.2·动作词密度 + 0.6·量化结果密度。"""
+    t = (text or "").strip()
+    if len(t) < MIN_SPAN_CHARS:
+        return 0.0
+    low = t.lower()
+    ha = sum(1 for k in skills if k in low)
+    hb = len(set(ACTIONS_RE.findall(t)))
+    hc = (1 if NUM.search(t) else 0) + (1 if RESULT.search(t) else 0)
+    a, b, c = _density(ha, len(t)), _density(hb, len(t)), _density(hc, len(t))
+    return 0.2 * a + 0.2 * b + 0.6 * c
+
+
+def bonus_raw_v2(texts: list[str], skills: list[str]) -> float:
+    """加分项原始量（G2）= Σq / √n；n 为合格证据条数，n=0 时返回 0。"""
+    sp = [t for t in (texts or []) if t and len(t.strip()) >= MIN_SPAN_CHARS]
+    if not sp:
+        return 0.0
+    return sum(span_quality(t, skills) for t in sp) / math.sqrt(len(sp))
 
 
 def percentile_rank(raw: dict[str, float]) -> dict[str, float]:

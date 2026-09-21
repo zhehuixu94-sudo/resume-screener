@@ -123,6 +123,26 @@ class VetoOverride(Strict):
     reason: str = Field(min_length=2)
 
 
+class GuardReview(Strict):
+    """「证据干净但证据量少 → 转人工」兜底（decide() 层）。
+
+    为什么需要（实测，310 份对照语料）：换成 G2+scale25 后，自动淘汰区里有 18 份是
+    「空话率 ≤ 0.35 且 基础项 ≥ 45」——证据条条具体、只是没有量化成果，被本批分位压到线以下。
+    它们是「证据量少」，不是「注水」；直接一票淘汰且无人复核 = 不可逆误杀（口径：漏放 ≫ 多看一眼）。
+    注水型不受影响：翻转件里注水型的空话率中位 0.71、最低 0.50，离 0.35 有干净间隔。
+
+    **为什么命中 0 还要留着**（2026-09-15 定稿批实测）：310 份里命中 0 条——33 条实际自动淘汰里
+    29 条走 fit 方向不符、3 条走学历硬门槛、1 条低分直淘，没有一条走到「分数淘汰 + 基础项 ≥ 45」
+    这个出口。它的价值在**将来批次**：那时若出现「证据条条具体但本批分位被打低」的干净件，
+    没有它就是不可逆误杀，有它只是多看一眼。零副作用（只拦自动淘汰、只降不升、不覆盖 fit 分支）。
+    """
+    enabled: bool = Field(default=False, description="默认关；按岗位显式开启（设定值即生效值）")
+    max_fluff_rate: float = Field(default=0.35, ge=0.0, le=1.0,
+                                  description="空话率上限：≤ 它才算『证据干净』（注水型最低 0.50）")
+    min_base: float = Field(default=45.0, ge=0.0,
+                            description="基础项下限：≥ 它才算『证据量够得着看』（挡掉证据本就稀薄的件）")
+
+
 class Scoring(Strict):
     pass_line: float = Field(ge=0, le=200, description="达标线")
     pass_line_source: Literal["manual_default", "anchor_calibrated"] = "manual_default"
@@ -166,6 +186,22 @@ class Scoring(Strict):
         description="模型整体判「边缘」但规则分低于线−band 时，是否允许自动淘汰。"
                     "默认 False（保守：印象没说不行就不自动淘汰）。开启能把人工队列压下来，"
                     "代价是漏放风险上升——务必配合阶段 5 的随机抽检来测漏放率。")
+    guard_review: GuardReview = Field(
+        default_factory=GuardReview,
+        description="「证据干净但证据量少 → 转人工」兜底：decide() 层拦截，**不动算分**。"
+                    "命中条件（全部满足）：空话率 ≤ max_fluff_rate、基础项 ≥ min_base、且本来要被自动淘汰。"
+                    "命中 → verdict=边缘 / decision=manual_review，reason 里写明原因。")
+    scoring_semantics: str = Field(
+        default="", description="**算分口径标记**：代码层的公式版本（不是配置参数），写进配置才能和历史批次对齐。"
+                                "例：`g2_scale25_budget25` = 加分项原始量 Σq/√n · 加分预算 25 · 扣分 30×空话率^1.5。"
+                                "与 config_version 配合：version 管配置参数、它管公式；口径变更必须同批次冻结配置快照"
+                                "（见 tools/freeze_config_snapshot.py），否则视为未完成")
+    calibration_version: int = Field(
+        default=0, ge=0,
+        description="**校准线版本**：`calibrate.apply` 每动一次达标线 +1；`config_version` 只管配置世代"
+                    "（新建申请/人工改配置才升）。两者必须分开——config_version 是 application/evaluation 的键值，"
+                    "`batch status` 等命令按当前版本过滤，用它承载动线会让整批结果从操作视图里消失。"
+                    "快照文件名带 cv 段（`_v<配置>-cv<线>-<公式>`），0 表示从未校准过（沿用旧命名）。")
 
 
 class JobConfig(Strict):

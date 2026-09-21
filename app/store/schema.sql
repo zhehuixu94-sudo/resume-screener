@@ -223,6 +223,24 @@ CREATE TABLE IF NOT EXISTS spot_check_item (
 );
 CREATE INDEX IF NOT EXISTS idx_spot_state ON spot_check_item (job_id, state, check_date);
 
+-- 抽检标记位（路线 A：抽检池从「只有自动淘汰件」扩到「自动淘汰 + 转人工」两类，各自带标记）：
+--   source              这一条是**哪一类**（决定它能不能进校准池，见 app/review.py 的 SOURCE_* 常量）
+--   priority_class      抽样优先级类别（擦线 / 打架 / unknown / 降序）——抽样顺序与配额按它走
+--   calibration_eligible 只有「自动淘汰件的复核结论 = 确实该淘汰」才置真
+--                        （转人工件的复核结论不进校准池：它不是系统漏放，而是系统没能自动判断，
+--                          混进去会把线拉歪——用户的明确口径）
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT '';
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT '';
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS calibration_eligible BOOLEAN NOT NULL DEFAULT false;
+
+-- 复核结论（步骤 4）：三列默认为空；写入路径强制 calibration_eligible=false，**只有回灌脚本**能置真。
+--   review_verdict  reject（确实该淘汰）/ keep（该留 = 系统判错了）/ uncertain（拿不准）
+--   reviewer        复核人（非空才允许回灌置真）
+--   review_ts       复核时间（非空才允许回灌置真）
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS review_verdict TEXT NOT NULL DEFAULT '';
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS reviewer TEXT NOT NULL DEFAULT '';
+ALTER TABLE spot_check_item ADD COLUMN IF NOT EXISTS review_ts TIMESTAMPTZ;
+
 -- ---------------------------------------------------------------- 口径校准（全自动更新 + 可回滚）
 -- 每次校准记一条：触发原因、用了哪些样本、改前改后的完整配置快照、是否被回滚。
 -- 回滚 = 用 before_payload 覆盖回配置文件（并再记一条 calibration 行，留痕）。
@@ -233,7 +251,7 @@ CREATE TABLE IF NOT EXISTS calibration (
     trigger        TEXT NOT NULL,                 -- manual（用户主动）/ spot_check_error（当日抽检误差≥2）
     from_version   TEXT NOT NULL,
     to_version     TEXT NOT NULL,
-    status         TEXT NOT NULL,                 -- applied / skipped（样本不足或两组分不开）
+    status         TEXT NOT NULL,                 -- applied / skipped（样本不足或两组分不开）/ failed（apply 出错已整体回滚）
     reason         TEXT NOT NULL DEFAULT '',
     samples        JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {pos:[...], neg:[...], 分数分布}
     changed        JSONB NOT NULL DEFAULT '{}'::jsonb,   -- {pass_line: {before, after}, ...}

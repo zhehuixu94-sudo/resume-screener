@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.text.extract import extract
+from tools.sample_paths import resume_extra_files
 
 PATTERNS = {
     "学历": r"(本科|专科|大专|硕士|研究生|博士)",
@@ -31,12 +32,10 @@ def scan(path: str) -> dict:
     return out
 
 
-SAMPLES = [
-    r"C:\Users\user\Desktop\毕设及简历\示例候选人简历3.0.docx",
-    r"C:\Users\user\Desktop\毕设及简历\resume_a.pdf",
-    r"C:\Users\user\Desktop\毕设及简历\resume_b.pdf",
-    r"C:\Users\user\Desktop\毕设及简历\个人简历.docx",
-] + [f"local/samples/resume_{i:03d}.txt" for i in range(1, 7)]
+SAMPLES = resume_extra_files(
+    "local/samples/resume_001.txt", "local/samples/resume_002.txt", "local/samples/resume_003.txt",
+    "local/samples/resume_004.txt", "local/samples/resume_005.txt", "local/samples/resume_006.txt",
+)
 
 for p in SAMPLES:
     if not os.path.exists(p):
