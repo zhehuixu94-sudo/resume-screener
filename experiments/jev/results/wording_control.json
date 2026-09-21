@@ -1,0 +1,62 @@
+{
+ "A_cn_statement|scholarship": {
+  "positive_rate": 0.95,
+  "acc": 0.25,
+  "mean_p": 0.881
+ },
+ "A_cn_statement|ml_ai": {
+  "positive_rate": 1.0,
+  "acc": 0.0,
+  "mean_p": 0.925
+ },
+ "A_cn_statement|english": {
+  "positive_rate": 1.0,
+  "acc": 0.05,
+  "mean_p": 0.918
+ },
+ "A_cn_statement|competition": {
+  "positive_rate": 0.95,
+  "acc": 0.7,
+  "mean_p": 0.873
+ },
+ "B_cn_question|scholarship": {
+  "positive_rate": 0.95,
+  "acc": 0.25,
+  "mean_p": 0.865
+ },
+ "B_cn_question|ml_ai": {
+  "positive_rate": 1.0,
+  "acc": 0.0,
+  "mean_p": 0.949
+ },
+ "B_cn_question|english": {
+  "positive_rate": 1.0,
+  "acc": 0.05,
+  "mean_p": 0.935
+ },
+ "B_cn_question|competition": {
+  "positive_rate": 1.0,
+  "acc": 0.65,
+  "mean_p": 0.878
+ },
+ "C_en_question|scholarship": {
+  "positive_rate": 0.35,
+  "acc": 0.65,
+  "mean_p": 0.391
+ },
+ "C_en_question|ml_ai": {
+  "positive_rate": 1.0,
+  "acc": 0.0,
+  "mean_p": 0.953
+ },
+ "C_en_question|english": {
+  "positive_rate": 1.0,
+  "acc": 0.05,
+  "mean_p": 0.94
+ },
+ "C_en_question|competition": {
+  "positive_rate": 0.35,
+  "acc": 0.5,
+  "mean_p": 0.409
+ }
+}

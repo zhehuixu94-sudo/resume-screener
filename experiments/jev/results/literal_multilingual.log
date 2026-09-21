@@ -1,0 +1,43 @@
+samples=100 checkpoint=multilingual
+device: cpu max_len: 1024
+  20/100  207s
+  40/100  395s
+  60/100  582s
+  80/100  775s
+  100/100  963s
+
+=== per-question (literal GT from regex) ===
+question         base   pred    acc    maj hiConfErr    ECE
+scholarship      0.18   0.95  0.230  0.820      0.42  0.685
+student_leader   0.14   0.82  0.320  0.860      0.43  0.617
+competition      0.82   0.94  0.780  0.820      0.07  0.130
+java             0.95   1.00  0.950  0.950      0.02  0.034
+ml_ai            0.00   1.00  0.000  1.000      0.83  0.933
+frontend         0.94   1.00  0.940  0.940      0.03  0.032
+database         0.72   1.00  0.720  0.720      0.19  0.203
+english          0.05   1.00  0.050  0.950      0.66  0.859
+
+OVERALL (800 decisions): accuracy=0.499  ECE=0.414
+
+=== calibration table (all decisions, 10 bins) ===
+  bin     n  mean_p  actual     gap
+  0.0     8   0.027   0.125  +0.098
+  0.1     5   0.136   0.000  -0.136
+  0.2     2   0.273   0.500  +0.227
+  0.3     5   0.355   0.200  -0.155
+  0.4     9   0.449   0.222  -0.227
+  0.5     6   0.561   0.333  -0.228
+  0.6    16   0.651   0.438  -0.214
+  0.7    34   0.763   0.353  -0.410
+  0.8   151   0.867   0.358  -0.509
+  0.9   564   0.941   0.532  -0.409
+
+high-confidence (|p|>=0.9) decisions: 573  wrong: 265 (46.2%)
+
+=== wording sensitivity for the security concept (same 100 resumes) ===
+  sec_a_literal  positive= 98/100  mean_p=0.835  acc_vs_regex=0.030
+  sec_b_narrow   positive= 98/100  mean_p=0.863  acc_vs_regex=0.030
+  sec_c_oud      positive= 98/100  mean_p=0.889  acc_vs_regex=0.030
+
+mean latency per resume (11 questions, cpu): 9627 ms
+EXIT=0

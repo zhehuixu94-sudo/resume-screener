@@ -36,3 +36,7 @@ dist/
 config/history/
 config/*.bak-*
 config/*.bak
+
+# ---- 实验产物：模型权重不入库（按 experiments/*/README.md 重下）----
+experiments/*/model/
+experiments/*/.venv/
