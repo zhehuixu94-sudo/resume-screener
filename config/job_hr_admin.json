@@ -121,12 +121,20 @@
     "fallback_keyword_mapping": true,
     "confidence_floor": 0.6,
     "labeling_repeats": 3,
-    "compare_repeats": 3
+    "compare_repeats": 3,
+    "auto_reject_enabled": true,
+    "guard_review": {
+      "enabled": true,
+      "max_fluff_rate": 0.35,
+      "min_base": 45
+    },
+    "scoring_semantics": "g2_scale25_budget25",
+    "calibration_version": 0
   },
   "calibration": {
     "status": "uncalibrated",
     "anchors": []
   },
   "interview_focus": "验证行政事务的真实参与度与细致程度",
-  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容） v2：给 edu 硬门槛补 keywords_pass/keywords_fail（规则层判 pass/fail/unknown，两边都没命中→unknown→转人工不淘汰）；本次同时换成 300 份按档位分层的行政岗对照语料。"
+  "notes": "由原型 v0 配置迁移（结构搬家，未替 HR 编内容） v2：给 edu 硬门槛补 keywords_pass/keywords_fail（规则层判 pass/fail/unknown，两边都没命中→unknown→转人工不淘汰）；本次同时换成 300 份按档位分层的行政岗对照语料。\n线 70 的确认记录：2026-09-15 全量重跑（310 份，提示词 p1.3 + 锚定去噪 + 阈值语义修正）后，四档判定分中位 = 明显合格 90.4 / 边缘合格 63.0 / 明显不匹配 38.4 / 注水型 50.4；70 落在 63.0~87.1 的稀疏空档里，且线在 65~75 之间调整不改变放行人数（分布双峰）。结论：**新口径下 auto_pass_line=70 仍有效**。此前 75.3/69.1/53.6/45.8 那组数是在「加分项分位恒为 0.50（错误口径）」下算的，已作废。\n\n【口径变更 2026-09-15 · g2_scale25_budget25】加分项原始量由 Σ(相关度×难度) 换成 Σq/√n（q=0.2技能密度+0.2动作词密度+0.6量化结果密度），加分预算 40→25，扣分不变（30×空话率^1.5）。config_version 仍是 2（评分参数没变），公式版本记在 scoring.scoring_semantics；历史分数复现必须配合 config/snapshots/hr_admin_v2-g2_scale25_budget25.json 里的 code_fingerprint。\n【guard_review】enabled=true 是**有意保留的空保险**：本批 310 份命中 0 条（33 条实际自动淘汰里，29 条走 fit 方向不符、3 条走学历硬门槛、1 条低分直淘，没有一条走到「分数淘汰 + 基础项≥45」这个出口），无副作用也无收益。留着是为了将来批次里「证据干净但本批分位被打低」的件不被一票淘汰；判定只降不升，不覆盖 fit 分支。\n【大专硬门槛 · 待 HR 决策】real_c / real_c_deg2 / real_c_deg3 三份真实/半合成件被自动淘汰，原因是简历命中岗位硬门槛的 keywords_fail（专科、大专），岗位要求本科及以上——属**岗位配置问题**，与本轮算分口径无关（与分数无关）。如需放宽（例如「大专+相关经验」），改 hard_filters.edu 的 keywords_fail / 加 overrides 豁免，属岗位配置变更流程。\n【校准线版本 · 2026-09-15】动线只动 scoring.calibration_version；config_version 是**配置世代**（application/evaluation 的键值，batch status/queue/retry 都按当前版本过滤）——用它承载动线会让整批结果从 HR 的操作视图里消失（实测：v2 过滤 = 310 行，v3 过滤 = 0 行）。快照命名 <job>_v<配置世代>-cv<线版本>-<公式>.json，cv=0 时不写 cv 段（v2 那份老快照名字保持不动）。job_config 行 = 当前生效配置；每一条历史线靠 cv 快照 + calibration 表 + evaluation.pass_line 追溯。\n【自动校准的统计闸门 · 2026-09-15】leak_budget 默认 0.01：要证明「漏放 ≤1.0%」需 ≥299 份标注样本（3 份样本即便 0 漏放，置信上界也有 63.2%）。按当前抽检节奏（每天 40 条，且正样本 auto_reject+keep 全批 0~1 条），自动校准几乎不会动线——这是设计不是故障。真实动线走人工锚点，或显式放宽 --leak-budget 并在报告里写明放宽到多少。"
 }
