@@ -306,9 +306,13 @@ def test_backfill_tool_dry_run_counts(env, tmp_path) -> None:
         w.writerow({"application_id": apps[1]["application_id"], "review_verdict": "reject",
                     "reviewer": "hr-徐", "review_ts": "2026-09-15T10:00:00"})   # 非 auto_reject
     out_csv = str(tmp_path / "pool.csv")
+    # 环境无关：子进程 stdout 显式钉成 UTF-8（否则 Windows 下按 ANSI 代码页输出中文，
+    # 父进程按 UTF-8 解码会 UnicodeDecodeError；2026-09-26 由 WSL 侧复现），
+    # 父进程侧再加 errors="replace" 兜底 —— 本测试不该依赖环境里的 PYTHONIOENCODING。
     p = subprocess.run([sys.executable, "tools/calibration_backfill.py", "--sample", sample,
                         "--reviews", reviews, "--out", out_csv],
-                       capture_output=True, text=True, encoding="utf-8")
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
     assert p.returncode == 0, p.stderr
     assert "应置真（进校准池）：1" in p.stdout, p.stdout
     assert "拒绝置真：1" in p.stdout, p.stdout
