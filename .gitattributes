@@ -1,0 +1,30 @@
+# 统一行尾：Windows(赫尔墨斯) 与 WSL(零一) 两侧的 git 视图必须一致
+# 背景：仓库无本文件、WSL 侧 core.autocrlf 未设，导致 WSL 侧 `git status` 报 71 个 M
+#       （实为 CRLF/LF 视图差异，`git diff --ignore-cr-at-eol` 内容差异 = 0）。
+# 规则：仓库内一律 LF 存储；Windows 侧由 core.autocrlf=true 在检出时转 CRLF。
+* text=auto
+
+# 批处理必须保持 CRLF（cmd.exe 对 LF 的兼容不可靠）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# shell 脚本保持 LF
+*.sh text eol=lf
+
+# 二进制，禁止任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.wav binary
+*.mp3 binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pyc binary
+*.sqlite binary
+*.db binary
