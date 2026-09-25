@@ -3,7 +3,7 @@
 > 用 LLM 帮 HR 把一批简历判成「达标 / 转人工 / 淘汰」，**每个结论都能点开原文证据**。
 > 定位是**排除器，不是择优器**：成功标准不是「排得准」，而是「没把该留的人刷掉」。
 
-个人项目（网络空间安全本科毕业设计方向 / 求职作品集），当前处于**任务 1、任务 2（M0 闭环）已完成并实测验收的阶段**。
+个人项目（网络空间安全本科毕业设计方向 / 求职作品集）。当前处于**「两段流程（定线 + 定及格项）+ 行政岗 310 份全量重跑」阶段**；口径与最新实测见第三节 `最新状态`。
 
 ---
 
@@ -49,12 +49,12 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 | 任务 | 状态 | 说明 |
 |---|---|---|
 | 任务 1 数据契约三件套 | ✅ 完成并验收 | 8 个 JSON Schema（Pydantic 导出）、四级证据锚定、校验四态（ok/repaired/degraded/failed）、三段带双通道判定 |
-| 任务 2 M0 最小闭环 | ✅ 完成（CLI + Web UI + exe） | 落库（PG + pgvector）、状态机、幂等与断点续跑；FastAPI 接口 + Vue3 前端 + 打包成单文件 exe |
+| 任务 2 M0 最小闭环 | ✅ 完成（CLI + Web UI + exe） | 落库（PG + pgvector）、状态机、幂等与断点续跑；FastAPI 接口 + Vue3（全局构建，无打包步骤）+ 打包成单文件 exe |
 | 任务 3 锚点标定达标线 | ✅ 已实现并实跑 | `tools/calibrate.py`：合格组≥3、不合格组≥2、两组必须分得开；达标线 = 合格组下限 |
 | 任务 4 规则分稳定性 | ✅ 已实现并实测 | `scoring.labeling_repeats`（多次标注取中位数 + 维度多数投票）+ `dimension_aggregation` |
-| 任务 5 时间线 / 字段级校验 | 🚧 时间线已完成 | `app/text/timeline.py`：起止矛盾 / 同类型经历重叠 / 经历空档 / 未来日期；字段级异常仍是占位 |
+| 任务 5 时间线 / 字段级校验 | ✅ 已完成 | `app/text/timeline.py`：起止矛盾 / 同类型经历重叠 / 经历空档 / 未来日期；字段级异常见 `app/text/fields.py`（6 类检查，由 `app/text/quality.py` 调用，非占位） |
 
-### 最新状态（2026-09-21 实测）
+### 最新状态（2026-09-21 实测，2026-09-25 复核）
 
 > 下面的任务表与实测是**历史节点**（任务 1~5 的验收记录）；系统此后进入“两段流程 + 全量重跑”阶段，现状见本节。
 
@@ -63,7 +63,7 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 | 口径 | 判定分 = 基础 60 + 加分 25（Σq/√n 批内分位）− 空话率^1.5 × 30；`pass_line=60` / `auto_pass_line=70` / 带 5，**设定值 = 生效值**（[55,70) 转人工） |
 | 全量重跑 | 行政岗 310 份（提示词 p1.3）：`auto_pass` 74 / `manual_review` 203 / `auto_reject` 33 |
 | 两段流程 | 第一段 `tools/calibrate.py` 定线、第二段 `tools/derive_basic_items.py` 定及格项（HR 勾 `hr_tick` 回灌 `basic_item_label`）；**等真实 HR 锚点**才能正式跑 |
-| 测试 | `pytest -q` = **203 passed** |
+| 测试 | `pytest -q`：**2026-09-25 实测 203 collected = 203 executed，全绿（34.9s）**，日志 `out/scratch/pytest-20260925.log`。判据是「collect 计数 = 执行数 且全绿」，**数值不钉死**（随代码变动；文档旧值 193 即由此而来） |
 | 未定稿 | γ / scale 与加分项 \|ρ(条数)\| 尚在决策（见 `docs/定稿决策-20260918.md`）；当前动线走**人工锚点** |
 | 模型路线 | 双路线：**Jev 线（外循环：问法 / 阈值 / 及格项）优先**，Laya 线（权重微调）兜底；生产走线上 API（目标机可能 Win7） |
 | 文档入口 | 当前权威 = 桌面《简历初筛_定稿交接-20260915.md》（2026-09-21 修订版）；单轮记录见 `docs/README.md` |
@@ -74,7 +74,7 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 |---|---|
 | 硬门槛规则化（任务 3 的前置） | 模型会把写着"本科""网络空间安全"的候选人判成"未提及学历"并据此自动淘汰；改为**规则层关键词预检**（pass/fail/unknown）后不再发生，证据不足一律转人工 |
 | 综合达标（口径修正） | 用户澄清：本科/四级/竞赛是**综合**标准，不是逐条否决。四级降为「英语能力」维度(5分)+加分项；学历/专业保留门槛但加 `overrides` 豁免（竞赛维度 ≥24/30 → 不自动淘汰、转人工）。回归测试覆盖"专科+ACM 金牌 → 转人工" |
-| 锚点标定（任务 3） | 合格组下限 43.3（zhehuixu94-sudo 60.0 / resume_001 45.5 / resume_004 43.3），不合格组上限 35.2（resume_a）→ 分得开 → 达标线 43.3，`pass_line_source=anchor_calibrated` |
+| 锚点标定（任务 3） | 本表是**老师岗**（`config/job_jushi_teacher.json`，现 `config_version=8`）：合格组下限 **41.1**（zhehuixu94-sudo 60.0 / resume_001 48.9 / resume_004 41.1），不合格组上限 35.2（resume_a）→ 分得开 → 达标线 **41.1**（v7 值），`pass_line_source=anchor_calibrated`。**注**：43.3 是 v5 的旧值，同一批锚点跨配置版本漂移 6.6 分，见 `docs/标定接线修复-20260918.md` |
 | 规则分稳定性（任务 4） | 同一份简历重复跑：单次标注 **极差 10.0~16.6**；`top2_mean` 单独用基本无效（14.4 不变、resume_a反而变差）→ 改为 **3 次标注取中位数 + 维度多数投票**：zhehuixu94-sudo 10.0 → **0.0**、resume_001 0.0、resume_a 11.0 → 6.6（其分数在 9.9~16.5 摆动，但处置恒为淘汰） |
 | 时间线自洽（任务 5） | 纯规则，实测抓到样例里的「2024/4 -- 2023/12」起止矛盾、同类型经历重叠、经历空档、未来日期；只提示不拦截 |
 
@@ -102,8 +102,9 @@ HR 拿到 200 份简历要在一晚上筛完，实际做法是搜关键词，结
 
 ```bash
 git clone <repo> && cd resume-screener
-uv venv --python 3.11 .venv          # 或 python -m venv .venv
-uv pip install --python .venv/Scripts/python.exe pydantic jsonschema pymupdf python-docx pytest
+python -m venv .venv                                   # 需 Python 3.11（本机 .venv 实测 3.11.16）
+.venv/Scripts/python -m pip install -r requirements-dev.txt   # 运行时 + 测试依赖；只跑系统装 requirements.txt
+cp .env.example .env                                   # 填 SILICONFLOW_API_KEY 与 PG*（.env 已 gitignore，绝不入库）
 
 export SILICONFLOW_API_KEY=sk-xxx    # 密钥只从环境变量读；开发期也可指向本机密钥文件
 
@@ -179,10 +180,15 @@ pending_parse → parsing → parsed → evaluating → evaluated → reviewed
 - **不在挂掉的模型上白等**：开跑前 `probe()` 探活主干，失败自动切 `--fallback-model`（实测主干端点会整段时间无响应）。
 
 **存储**：容器 `resume_pg`（`pgvector/pgvector:pg18`，主机 127.0.0.1:5433，库 `resume_screener`，用户 `resume_app`）。
-表：`job_config`（配置版本化）· `resume`（简历实体）· `application`（应聘关系 + 状态机）·
+表（`app/store/schema.sql` 共 **14 张**）：`job_config`（配置版本化）· `resume`（简历实体）· `application`（应聘关系 + 状态机）·
 `resume_parse`（解析结果）· `evidence_span`（证据 span 索引）· `evaluation`（评分行，带 model_id/prompt_hash/config_version）·
-`audit_log`（append-only）· `resume_chunk`（检索层，v1 不写）。
+`audit_log`（append-only）· `resume_chunk`（检索层，v1 不写）·
+`review_decision` · `spot_check_batch` · `spot_check_item` · `calibration` · `basic_item_label` · `stability_check`（抽检闭环 / 校准 / 两段流程用）。
 DSN 走环境变量 `PG_DSN` / `PGHOST` `PGPORT` `PGUSER` `PGPASSWORD` `PGDATABASE`，仓库里没有任何凭据。
+
+**端口口径（已知坑，务必区分「代码默认」与「部署值」）**：部署一律用 **5433** —— 容器 `pgvector/pgvector:pg18` 把宿主 5433 映射到容器内 5432，
+`run.bat`（`PGPORT_HOST=5433`，未设时自动导出 `PGPORT`）与 `.env.example` 都是 5433；
+而 `app/store/db.py` 的代码默认值是 **5432**（给本机原生 PostgreSQL 用）。**直接跑 `python tools/init_db.py` 且不设 `PGPORT`/`PG_DSN` 会连 5432 而报连不上** —— 走 `run.bat` 或先 `. .env` 即不会踩。
 
 ## 六、目录结构
 
@@ -201,9 +207,16 @@ web/           Vue3 前端（全局构建，无打包步骤，Chrome 109 兼容�
 launcher.py    exe 启动器（挑端口 → 起服务 → 开浏览器）
 build_exe.bat  一键打包 exe
 schemas/       由 Pydantic 导出的 JSON Schema（含 5 段模型输出契约）
-config/        6 个岗位配置（硬门槛 / 维度锚点 / 加分项关键词 / 达标线与标定）
-tools/         导出 schema · 迁移配置 · 契约验收
-tests/         契约、锚定、判定策略的回归测试
+config/        9 个岗位配置（硬门槛 / 维度锚点 / 加分项关键词 / 达标线与标定）+ snapshots/（口径快照：内嵌配置逐字 + 代码指纹 + 批次指纹）；当前只有 hr_admin 套用最新口径
+tools/         45 个脚本：导出 schema / 迁移配置 / 契约验收 / 标定 / 及格项推导 / 抽检 / 收口校验 / 沙箱守卫
+tests/         契约、锚定、判定策略、抽检与校准的回归测试（26 个测试文件）
+docs/          单轮记录与定稿决策（docs/README.md 是索引；权威交接在仓库外的桌面文档）
+experiments/   Jev vs Laya 选型实验（探针脚本 + results/ 原始结果）
+local/         真实简历清单与内部文档（gitignore，不入库）
+out/           报告与运行产物、分析脚本（gitignore，不入库）
+
+顶层文件：requirements.txt / requirements-dev.txt（运行时 / 运行时+测试依赖）· .env.example（环境变量样例）·
+run.bat（Windows 一键：db → env → initdb → check，每步可单独重跑）· build_exe.bat · launcher.py · ResumeScreener.spec
 ```
 
 ## 七、不提交什么
@@ -219,4 +232,6 @@ tests/         契约、锚定、判定策略的回归测试
 ## 九、技术栈
 
 Python 3.11 · Pydantic v2 · JSON Schema · psycopg 3 · PostgreSQL + pgvector（容器 pgvector/pgvector:pg18）·
-硅基流动（LLM / Embedding / Reranker）· FastAPI + Vue3/Vite（构建 target Chrome 109，客户端层待做）
+硅基流动（LLM，OpenAI 兼容 HTTP）· FastAPI + Vue3（**全局构建**：`web/vendor/vue.global.prod.js`，无 Vite、无 package.json、无打包步骤，Chrome 109 兼容）· PyInstaller（单文件 exe）
+
+> 说明：**当前代码里没有 Embedding / Reranker**（`grep -rn 'embedding\|rerank' app/` 无命中）；简历是 1~2 页短文档，整份进上下文即可，检索层（`resume_chunk` 表）v1 不写。此前 README 的「Embedding / Reranker」「Vue3/Vite」两处与技术栈实况不符，已于 2026-09-25 修正。
