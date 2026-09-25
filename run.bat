@@ -44,13 +44,18 @@ if errorlevel 1 (
   echo [ERROR] Docker is not available. Start Docker Desktop and re-run.
   exit /b 1
 )
-docker ps --format "{{.Names}}" | findstr /x /c:"%CONTAINER%" >nul
-if not errorlevel 1 (
+REM Container detection uses `docker inspect`, NOT `findstr` on `docker ps` output:
+REM docker.exe prints LF-only lines, and findstr /x cannot match LF-only input
+REM (verified 2026-09-25: same name, `findstr /x` on the piped output returns 1).
+REM That made this script non-idempotent - every re-run hit "Conflict. The
+REM container name ... is already in use" and exited 1.
+set "RUNNING="
+for /f "delims=" %%i in ('docker inspect -f "{{.State.Running}}" %CONTAINER% 2^>nul') do set "RUNNING=%%i"
+if /i "!RUNNING!"=="true" (
   echo        already running.
   goto db_done
 )
-docker ps -a --format "{{.Names}}" | findstr /x /c:"%CONTAINER%" >nul
-if not errorlevel 1 (
+if /i "!RUNNING!"=="false" (
   echo        exists but stopped - starting...
   docker start "%CONTAINER%" >nul
   if errorlevel 1 (echo [ERROR] docker start failed & exit /b 1)
