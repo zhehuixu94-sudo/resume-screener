@@ -1,0 +1,11 @@
+# 运行时依赖（2026-09-21 由本机 .venv 实测版本固定；Python 3.11）
+# 说明：本文件由赫尔墨斯补入（对应 PROJECT-ALIGN-20260926「完整项目」缺口①）。
+# 复现：python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
+pydantic==2.13.5
+jsonschema==4.26.0
+pymupdf==1.28.2
+python-docx==1.2.0
+psycopg[binary]==3.3.5
+fastapi==0.141.1
+uvicorn==0.52.4
+lxml==6.1.3
