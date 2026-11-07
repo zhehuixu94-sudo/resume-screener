@@ -9,7 +9,7 @@
 - 加 calibration（未标定）、schema_version、config_version、company_id。
 
 用法：
-  python tools/migrate_job_config.py --src D:/resume-demo/config --dst config
+  python tools/migrate_job_config.py --src <原型仓库>/config --dst config
 """
 from __future__ import annotations
 
